@@ -1,0 +1,37 @@
+traversability_mapping:
+  ros__parameters:
+    planning: 
+      cost_max: 50.0   #大于等于100就是障碍物  #cost (2-15)映射到0-100
+      white_cost: 100  #空白区域代价60  20   mppisim:100
+      cost_bias: 1     #地图代价系数100
+      search_time: 0.17
+      steer_length: 0.2
+      search_radius: 1    #搜索邻居半径
+      goal_radius: 0.5  #sim   real:1
+      max_tree_node_nums: 20000
+      goal_bias: 0.15   #初次搜索终点路径的偏移概率
+      time_roll: 3   #滚动规划时间，s  slam:3   odom:3
+      inflate_r: 0  #代价地图膨胀半径0.3  sim:0
+      follow_dis: 3 #跟综距离  mpc+slam：1.5  cmu或odom:3
+      goal_local_dis: 100  #局部终点距离 实际18，仿真无穷
+    filter:
+      filterflag: true  #借用直接从点云判断
+      # filterHeightLimit: 0.06 #草地：0.06   道路0.05  两点间的高度查 downsample
+      # filterAngleLimit: 19  #草地：19   道路10  垂直方向角度
+      # positiveParam: 0.06
+      # negativeHeight: 0.2
+      # negativeDist: 1
+      #sim
+      filterHeightLimit: 0.1 #草地：0.06   道路0.05  两点间的高度查 downsample
+      filterAngleLimit: 19  #草地：19   道路10  垂直方向角度
+      positiveParam: 0.1
+      negativeHeight: 0.2
+      negativeDist: 1
+
+    local_plan:
+      radius: 0.3  
+      visitflag: false #在mpl中，未扫描到区域代价无穷大
+
+ 
+
+

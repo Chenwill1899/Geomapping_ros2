@@ -1,0 +1,27 @@
+{
+  "configurations": [
+    {
+      "browse": {
+        "databaseFilename": "${default}",
+        "limitSymbolsToIncludedHeaders": false
+      },
+      "includePath": [
+        "/home/zle/ausim_mpl3/devel/include/**",
+        "/opt/ros/melodic/include/**",
+        "/home/zle/ausim_mpl3/src/fast-lio/FAST_LIO/include/**",
+        "/home/zle/ausim_mpl3/src/LIO-SAM/include/**",
+        "/home/zle/ausim_mpl3/src/mpc/include/**",
+        "/home/zle/ausim_mpl3/src/scout/scout_gazebo_sim/include/**",
+        "/home/zle/ausim_mpl3/src/traversability_mapping/traversability_mapping/include/**",
+        "/home/zle/ausim_mpl3/src/master/velodyne_gazebo_plugins/include/**",
+        "/usr/include/**"
+      ],
+      "name": "ROS",
+      "intelliSenseMode": "gcc-x64",
+      "compilerPath": "/usr/bin/gcc",
+      "cStandard": "gnu11",
+      "cppStandard": "c++14"
+    }
+  ],
+  "version": 4
+}

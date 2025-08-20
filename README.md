@@ -1,0 +1,1 @@
+2025/8/20：这份程序从人机示教程序ROS1版本迁移到了ROS2版本，目前已经将主要的程序进行移植，但是存在的一个bug是：terrain_pub_node节点发布出来的/syncd_project_cloud话题频率为10hz，但是在traversability_filter节点接收存在爆冲现象，也就是接收不稳定。
