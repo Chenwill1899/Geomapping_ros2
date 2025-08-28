@@ -31,6 +31,7 @@
         "forward_list": "cpp",
         "list": "cpp",
         "vector": "cpp",
-        "functional": "cpp"
+        "functional": "cpp",
+        "chrono": "cpp"
     }
 }

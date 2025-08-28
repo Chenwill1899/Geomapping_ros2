@@ -185,12 +185,12 @@ def generate_launch_description():
         #rviz_node,
         velodyne_base_link_tf_publisher,
         camera_map_tf_publisher,
-        base_map_tf_publisher,
+        # base_map_tf_publisher,
         fast_lio_mapping_velodyne_launch,
         traversability_filter_node,
         # OpaqueFunction(function=load_traversability_params), # 如果需要模拟 rosparam load，但通常不推荐
-        # traversability_map_node,
-        # traversability_cost_node,
+        traversability_map_node,
+        traversability_cost_node,
         terrain_pub_node,
         rviz_node
         # traversability_path_node,

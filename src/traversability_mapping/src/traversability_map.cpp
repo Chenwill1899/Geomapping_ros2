@@ -1280,7 +1280,7 @@ public:
         center.x = 5.0f; // Add f suffix
         center.y = 0.0f; // Add f suffix
         center.z = 0.0f; // Add f suffix
-
+        rclcpp::Time t1 = this->get_clock()->now();
         // setCostInRadius(center, 1.0, 100.0);
         Eigen::Vector3d robotOrigin = Eigen::Vector3d(robotPoint.x, robotPoint.y, robotPoint.z);
         // caster_->setRrigin(robotOrigin);
@@ -1290,14 +1290,14 @@ public:
         elevationMapProcess();
 
 
-        rclcpp::Time t1 = this->get_clock()->now();
+        
 
         // Register New Scan
         updateElevationMap();
 
         rclcpp::Time t2 = this->get_clock()->now();
         double elapsed_time_ms = (t2 - t1).seconds() * 1000.0; // Cast to double for multiplication
-
+        RCLCPP_INFO(get_logger(), "elevation map updated, time: %.2f ms", elapsed_time_ms);
         // Additional file logging part needs to be adapted for ROS2 (e.g., using `rclcpp::Log`) or removed.
         // std::ofstream file("/home/zle/Desktop/figure/毕业论文/time_record/ele_time.txt", std::ios::app);
         // if (file.is_open()) {

@@ -82,8 +82,9 @@ private:
 
         sensor_msgs::msg::PointCloud2 laserCloudmsg;
         pcl::toROSMsg(pl_terrain, laserCloudmsg);
-        laserCloudmsg.header.stamp = this->now();
-        laserCloudmsg.header.frame_id = "base_link";
+        //需要保证用原消息时间戳
+        laserCloudmsg.header.stamp = msg->header.stamp;
+        laserCloudmsg.header.frame_id = "/base_link";
 
         pubLaserCloudFull_terrain->publish(laserCloudmsg);
     }

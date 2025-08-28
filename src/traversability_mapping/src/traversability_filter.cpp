@@ -218,52 +218,27 @@ public:
 
     void cloudHandler(const sensor_msgs::msg::PointCloud2::SharedPtr laserCloudMsg){
         
-        rclcpp::Clock clock(RCL_ROS_TIME);
-
-        rclcpp::Time t0 = clock.now();
         extractRawCloud(laserCloudMsg);
-        rclcpp::Time t1 = clock.now();
-        RCLCPP_INFO(this->get_logger(), "extractRawCloud took: %ld ms", (t1 - t0).nanoseconds()/1000000);
 
-        if (!transformCloud(laserCloudMsg->header.stamp)) {
-        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-                             "TF not available for msg stamp, skip frame.");
-        return;
-    }
-        rclcpp::Time t2 = clock.now();
-        RCLCPP_INFO(this->get_logger(), "transformCloud took: %ld ms", (t2 - t1).nanoseconds()/1000000);
+        if (!transformCloud()) {
+            return;
+        }
 
         cloud2Matrix();
-        rclcpp::Time t3 = clock.now();
-        RCLCPP_INFO(this->get_logger(), "cloud2Matrix took: %ld ms", (t3 - t2).nanoseconds()/1000000);
 
         applyFilter();
-        rclcpp::Time t4 = clock.now();
-        RCLCPP_INFO(this->get_logger(), "applyFilter took: %ld ms", (t4 - t3).nanoseconds()/1000000);
 
         extractFilteredCloud();
-        rclcpp::Time t5 = clock.now();
-        RCLCPP_INFO(this->get_logger(), "extractFilteredCloud took: %ld ms", (t5 - t4).nanoseconds()/1000000);
 
         downsampleCloud();
-        rclcpp::Time t6 = clock.now();
-        RCLCPP_INFO(this->get_logger(), "downsampleCloud took: %ld ms", (t6 - t5).nanoseconds()/1000000);
 
         predictCloudBGK();
-        rclcpp::Time t7 = clock.now();
-        RCLCPP_INFO(this->get_logger(), "predictCloudBGK took: %ld ms", (t7 - t6).nanoseconds()/1000000);
 
         publishCloud();
-        rclcpp::Time t8 = clock.now();
-        RCLCPP_INFO(this->get_logger(), "publishCloud took: %ld ms", (t8 - t7).nanoseconds()/1000000);
 
         // publishLaserScan();
-        // rclcpp::Time t9 = clock.now();
-        // RCLCPP_INFO(this->get_logger(), "publishLaserScan took: %ld ms", (t9 - t8).nanoseconds()/1000000);
 
         resetParameters();
-        rclcpp::Time t10 = clock.now();
-        RCLCPP_INFO(this->get_logger(), "resetParameters took: %ld ms", (t10 - t8).nanoseconds()/1000000);
         
     }
 
@@ -330,27 +305,45 @@ public:
 // pcl::PointCloud<PointType>::Ptr laserCloudIn; // 假设 laserCloudIn 已经初始化
 // rclcpp::Node::SharedPtr node_ptr_; // 用于获取 logger 和 clock
 
-bool transformCloud(const rclcpp::Time& stamp) {
+bool transformCloud()
+{
     try {
-        // 完全非阻塞：查不到就放弃这一帧
-        if (!tf_buffer_->canTransform(frameID, "base_link", stamp, tf2::durationFromSec(0.0))) {
-            return false;
-        }
-        auto tf = tf_buffer_->lookupTransform(frameID, "base_link", stamp);
+        // 等价于 ROS1 的 ros::Time(0)：取“最新可用”变换
+        // 保留你原代码的 frameID <- base_link 的方向
+        transform_ = tf_buffer_->lookupTransform(
+            "map",                 // 目标坐标系（例如 "map"/"odom"）
+            "base_link",             // 源坐标系
+            rclcpp::Time(0));        // 最新变换（保持你原来的语义）
 
-        robotPoint.x = tf.transform.translation.x;
-        robotPoint.y = tf.transform.translation.y;
-        robotPoint.z = tf.transform.translation.z;
-
-        Eigen::Affine3f T = tf2::transformToEigen(tf).cast<float>();
-        pcl::PointCloud<PointType> tmp;
-        pcl::transformPointCloud(*laserCloudIn, tmp, T);
-        *laserCloudIn = std::move(tmp);
-        return true;
     } catch (const tf2::TransformException &ex) {
-        RCLCPP_DEBUG(this->get_logger(), "TF miss: %s", ex.what());
+        // 等价于原来的 catch 分支：失败返回 false
+        // RCLCPP_WARN(this->get_logger(), "Transform failure: %s", ex.what());
         return false;
     }
+
+    // 记录机器人位置（保持你原逻辑）
+    robotPoint.x = transform_.transform.translation.x;
+    robotPoint.y = transform_.transform.translation.y;
+    robotPoint.z = transform_.transform.translation.z;
+
+    // 与原来一致：把输入点云视作来自 "base_link"
+    // （注意：这是给你自己的处理逻辑看的，不是 ROS2 消息头）
+    laserCloudIn->header.frame_id = "base_link";
+    laserCloudIn->header.stamp    = 0;  // 与原代码相同的占位写法
+
+    // 执行点云坐标变换（保留“先到临时，再覆盖”的结构）
+    pcl::PointCloud<PointType> laserCloudTemp;
+
+    // 将 geometry_msgs 的 TransformStamped 转为 Eigen 仿射矩阵（float）
+    Eigen::Affine3f tf_eigen = tf2::transformToEigen(transform_).cast<float>();
+
+    // 用 PCL 完成点云坐标变换
+    pcl::transformPointCloud(*laserCloudIn, laserCloudTemp, tf_eigen);
+
+    // 覆盖回输入
+    *laserCloudIn = std::move(laserCloudTemp);
+
+    return true;
 }
 
 
