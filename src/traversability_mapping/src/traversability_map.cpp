@@ -177,34 +177,48 @@ public:
         tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock()); // 直接使用 this
         tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
-        this->declare_parameter<bool>("/filter/filterflag", false); // 直接使用 this
-        this->get_parameter("/filter/filterflag", filterflag);     // 直接使用 this
-        this->declare_parameter<double>("/planning/cost_max", 100.0);
-        this->get_parameter("/planning/cost_max", cost_max_);
-        this->declare_parameter<double>("/planning/search_time", 5.0);
-        this->get_parameter("/planning/search_time", search_time_);
-        this->declare_parameter<double>("/planning/steer_length", 1.0);
-        this->get_parameter("/planning/steer_length", steer_length_);
-        this->declare_parameter<double>("/planning/search_radius", 2.0);
-        this->get_parameter("/planning/search_radius", search_radius_);
-        this->declare_parameter<double>("/planning/goal_radius", 0.5);
-        this->get_parameter("/planning/goal_radius", goal_radius_);
-        this->declare_parameter<int>("/planning/max_tree_node_nums", 10000);
-        this->get_parameter("/planning/max_tree_node_nums", max_tree_node_nums_);
-        this->declare_parameter<double>("/planning/goal_bias", 0.05);
-        this->get_parameter("/planning/goal_bias", goal_bias_);
-        this->declare_parameter<double>("/planning/white_cost", 0.0);
-        this->get_parameter("/planning/white_cost", white_cost_);
-        this->declare_parameter<double>("/planning/cost_bias", 0.5);
-        this->get_parameter("/planning/cost_bias", cost_bias_);
-        this->declare_parameter<double>("/planning/time_roll", 10.0);
-        this->get_parameter("/planning/time_roll", time_roll_);
-        this->declare_parameter<float>("/planning/inflate_r", 0.3f); // 添加f后缀
-        this->get_parameter("/planning/inflate_r", inflate_r_);
-        this->declare_parameter<double>("/planning/follow_dis", 2.5);
-        this->get_parameter("/planning/follow_dis", follow_dis_);
-        this->declare_parameter<double>("/planning/goal_local_dis", 15.0);
-        this->get_parameter("/planning/goal_local_dis", goal_local_dis_);
+       
+       this->declare_parameter<double>("planning.cost_max", 100.0);
+        this->get_parameter("planning.cost_max", cost_max_);
+
+        this->declare_parameter<double>("planning.search_time", 0.17);
+        this->get_parameter("planning.search_time", search_time_);
+
+        this->declare_parameter<double>("planning.steer_length", 1.0);
+        this->get_parameter("planning.steer_length", steer_length_);
+
+        this->declare_parameter<double>("planning.search_radius", 2.0);
+        this->get_parameter("planning.search_radius", search_radius_);
+
+        this->declare_parameter<double>("planning.goal_radius", 0.5);
+        this->get_parameter("planning.goal_radius", goal_radius_);
+
+        this->declare_parameter<int>("planning.max_tree_node_nums", 10000);
+        this->get_parameter("planning.max_tree_node_nums", max_tree_node_nums_);
+
+        this->declare_parameter<double>("planning.goal_bias", 0.05);
+        this->get_parameter("planning.goal_bias", goal_bias_);
+
+        this->declare_parameter<double>("planning.white_cost", 0.0);
+        this->get_parameter("planning.white_cost", white_cost_);
+
+        this->declare_parameter<double>("planning.cost_bias", 0.5);
+        this->get_parameter("planning.cost_bias", cost_bias_);
+
+        this->declare_parameter<double>("planning.time_roll", 10.0);
+        this->get_parameter("planning.time_roll", time_roll_);
+
+        // YAML 没有 float 类型，建议这里也声明为 double，再自行转换成 float
+        this->declare_parameter<double>("planning.inflate_r", 0.3);
+        double inflate_r_tmp;
+        this->get_parameter("planning.inflate_r", inflate_r_tmp);
+        inflate_r_ = static_cast<float>(inflate_r_tmp);
+
+        this->declare_parameter<double>("planning.follow_dis", 2.5);
+        this->get_parameter("planning.follow_dis", follow_dis_);
+
+        this->declare_parameter<double>("planning.goal_local_dis", 15.0);
+        this->get_parameter("planning.goal_local_dis", goal_local_dis_);
 
 
         pool_max_nums_ = 2 * max_tree_node_nums_; //必须要大于搜索的最大节点数
@@ -888,7 +902,7 @@ public:
 
         // For ROS2, file operations are not typically tied to callbacks this way.
         // If file saving is required, consider a separate service or a dedicated thread/function.
-        std::lock_guard<std::mutex> lock(mtx);
+        // std::lock_guard<std::mutex> lock(mtx);
         goalPoint.x = goal->pose.position.x;
         goalPoint.y = goal->pose.position.y;
         goalPoint.z = goal->pose.position.z;
@@ -908,7 +922,7 @@ public:
 
 
     void RRTstarHandler() { // 移除了 TimerEvent 参数
-        std::lock_guard<std::mutex> lock(mtx);
+        // std::lock_guard<std::mutex> lock(mtx);
         try{
             transform = tf_buffer_->lookupTransform("map","base_link", tf2::TimePointZero);
             robotPoint.x = transform.transform.translation.x;
@@ -1192,7 +1206,7 @@ public:
     }
 
     void rewardHandler(const elevation_msgs::msg::OccupancyElevation::ConstSharedPtr rewardMsg){
-        std::lock_guard<std::mutex> lock(mtx);
+        // std::lock_guard<std::mutex> lock(mtx);
         rewardMap = *rewardMsg;
         elevation_msgs::msg::OccupancyElevation rewardInflate = rewardMap;
         //膨胀代价地图
@@ -1267,7 +1281,8 @@ public:
     }
 
     void cloudHandler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr laserCloudMsg){
-        std::lock_guard<std::mutex> lock(mtx);
+        
+        // std::lock_guard<std::mutex> lock(mtx);
         // Lock thread
         // std::lock_guard<std::mutex> lock(mtx);
         // Get Robot Position
@@ -1280,7 +1295,7 @@ public:
         center.x = 5.0f; // Add f suffix
         center.y = 0.0f; // Add f suffix
         center.z = 0.0f; // Add f suffix
-        rclcpp::Time t1 = this->get_clock()->now();
+        
         // setCostInRadius(center, 1.0, 100.0);
         Eigen::Vector3d robotOrigin = Eigen::Vector3d(robotPoint.x, robotPoint.y, robotPoint.z);
         // caster_->setRrigin(robotOrigin);
@@ -1295,9 +1310,7 @@ public:
         // Register New Scan
         updateElevationMap();
 
-        rclcpp::Time t2 = this->get_clock()->now();
-        double elapsed_time_ms = (t2 - t1).seconds() * 1000.0; // Cast to double for multiplication
-        RCLCPP_INFO(get_logger(), "elevation map updated, time: %.2f ms", elapsed_time_ms);
+        
         // Additional file logging part needs to be adapted for ROS2 (e.g., using `rclcpp::Log`) or removed.
         // std::ofstream file("/home/zle/Desktop/figure/毕业论文/time_record/ele_time.txt", std::ios::app);
         // if (file.is_open()) {

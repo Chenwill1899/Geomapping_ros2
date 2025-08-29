@@ -1,2 +1,12 @@
+
+
+
+DEBUG：
+
 2025/8/20：这份程序从人机示教程序ROS1版本迁移到了ROS2版本，目前已经将主要的程序进行移植，但是存在的一个bug是：terrain_pub_node节点发布出来的/syncd_project_cloud话题频率为10hz，但是在traversability_filter节点接收存在爆冲现象，也就是接收不稳定。
-2025/8/28：前面的bug解决了，原因在于时间辍不匹配。之前在用ai转换的时候，原程序中的时间辍是设置为0,但是ai自动将他设置为当前时间了。所以导致了爆冲现象。现在filiter——pointcloud能够正常以10hz发布。另外之前一直报错找不到map和base_link之间的关系。原因在于该项目对fast_lio进行了修改，添加了map和base_link之间的tf关系。也就是将原本camera——init和body的关系，改成map和base_link关系发布。效果一样的。目前可以正常建图。但是现在的bug是，mshg_local_height这个话题发布的很慢，而且cost程序中地形计算花销很大。
+
+
+2025/8/28：前面的bug解决了，原因在于时间辍不匹配。之前在用ai转换的时候，原程序中的时间辍是设置为0,但是ai自动将他设置为当前时间了。所以导致了爆冲现象。现在filiter——pointcloud能够正常以10hz发布。另外之前一直报错找不到map和base_link之间的关系。原因在于该项目对fast_lio进行了修改，添加了map和base_link之间的tf关系。也就是将原本camera——init和body的关系，改成map和base_link关系发布。效果一样的。目前可以正常建图。但是现在的bug是，msg_local_height这个话题发布的很慢，而且cost程序中地形计算花销很大。
+
+
+2025/8/29：终于发现了问题，原来是traversability_map.cpp中没有正确从yaml文件中传参，导致RRT搜索时间被设置成5s（本应该是0.17s），所以每次发布完一次数据之后，需要等待rrt搜索结束后才会进行下一次发布，就存在了发布频率低的问题。目前仅剩下计算花销大的问题。

@@ -164,11 +164,9 @@ bool get_robot_position() {
         }
 
         // 计算地形特征（坡度、台阶等）
-        auto t1 = this->now();
+        
         compute_terrain(dem_matrix_raw);
-        auto t2 = this->now();
-        double elapsed_time_ms = (t2 - t1).seconds() * 1000;
-        RCLCPP_INFO(this->get_logger(), "地形计算耗时: %.2f ms", elapsed_time_ms);
+        
 
         // 填充点云和特征地图
         for (int i = 0; i < width; ++i) {

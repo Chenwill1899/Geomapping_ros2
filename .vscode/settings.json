@@ -32,6 +32,8 @@
         "list": "cpp",
         "vector": "cpp",
         "functional": "cpp",
-        "chrono": "cpp"
+        "chrono": "cpp",
+        "string": "cpp",
+        "hash_map": "cpp"
     }
 }

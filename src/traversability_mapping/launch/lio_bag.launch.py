@@ -64,7 +64,7 @@ def generate_launch_description():
         executable='rviz2', # ROS 2 中 rviz 的可执行文件是 rviz2
         name='rviz',
         output='log',
-        arguments=['-d', os.path.join(traversability_mapping_pkg_share_dir, 'launch', 'include', 'traversability_mapping.rviz')],
+        arguments=['-d', os.path.join('/home/mexxiie/prj/Geomapping_ros2/src/traversability_mapping/launch/include/traversability_mapping.rviz')],
     )
 
     # 静态 TF 转换发布器节点
@@ -121,7 +121,7 @@ def generate_launch_description():
         parameters=[
             {'urbanMapping': True},
             # 如果 traversability.yaml 中的参数也需要应用于此节点，可以在这里添加文件加载
-            os.path.join('/home/mexxiie/prj/Geomapping_ros2/src/traversability_mapping/', 'params', 'traversability.yaml')
+            os.path.join('/home/mexxiie/prj/Geomapping_ros2/src/traversability_mapping/params/traversability.yaml')
         
         ]
     )

@@ -4,16 +4,16 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import PointCloud2
 import time
-
-
+from elevation_msgs.msg import OccupancyElevation
 class TopicListener(Node):
 
     def __init__(self):
         super().__init__('topic_listener')
         self.subscription = self.create_subscription(
             PointCloud2,
+            # OccupancyElevation,
+            # '/msg_local_height',
             '/filtered_pointcloud',
-            # '/syncd_project_cloud',
             self.listener_callback,
             10)
         self.last_received_time = None
