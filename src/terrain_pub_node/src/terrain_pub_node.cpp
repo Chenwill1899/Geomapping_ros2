@@ -32,6 +32,7 @@ public:
 
         pubLaserCloudFull_terrain = this->create_publisher<sensor_msgs::msg::PointCloud2>(
             "/syncd_project_cloud", sensor_qos);
+        
 
         sub_pcl = this->create_subscription<sensor_msgs::msg::PointCloud2>(
             "/velodyne_points", sensor_qos,
