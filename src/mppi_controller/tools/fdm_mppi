@@ -1,0 +1,16 @@
+#!/usr/bin/env python3
+import sys
+
+
+def _strip_ros_args(argv):
+    if "--ros-args" in argv:
+        idx = argv.index("--ros-args")
+        return argv[:idx]
+    return argv
+
+
+if __name__ == "__main__":
+    sys.argv = _strip_ros_args(sys.argv)
+    from mppi_controller.cli import main
+
+    main()

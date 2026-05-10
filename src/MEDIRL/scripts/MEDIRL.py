@@ -13,7 +13,6 @@ from elevation_msgs.msg import OccupancyElevation
 import numpy as np
 import math
 import torch
-from torch.autograd import Variable
 from os.path import join
 import time
 from env_dilated import OnlyEnvDilated
@@ -22,14 +21,26 @@ class MEDIRL_env(Node):
     def __init__(self):
         super().__init__('MEDIRL')
         
+        self.declare_parameter('device', 'cuda')
+        self.declare_parameter('debug_timing', False)
+        requested_device = self.get_parameter('device').value
+        self.debug_timing = bool(self.get_parameter('debug_timing').value)
+        if requested_device == 'cuda' and not torch.cuda.is_available():
+            self.get_logger().warn("CUDA requested for MEDIRL but unavailable; falling back to CPU")
+            requested_device = 'cpu'
+        self.device = torch.device(requested_device)
+        if self.device.type == 'cpu':
+            torch.set_num_threads(4)
+
         self.grid_size = 180
+        self.total_cells = self.grid_size * self.grid_size
         self.net = OnlyEnvDilated(feat_in_size=4, feat_out_size=25)
         self.net.init_weights()
-        # 加载模型时添加map_location参数，避免设备不匹配问题
         self.net.load_state_dict(torch.load(
             join('/home/mexxiie/prj/Geo_Semantic_fusion_nav_ws', 'step16-loss0.pth'),
-            map_location=torch.device('cpu')
+            map_location=self.device
         )['net_state'])
+        self.net.to(self.device)
         self.net.eval()
         
         self.have_sem = True
@@ -38,11 +49,9 @@ class MEDIRL_env(Node):
         # 初始化消息
         self.reward_msg = OccupancyElevation()
         self.reward_msg.header.frame_id = 'map'
-        grid_total = self.grid_size * self.grid_size
-        
         # 初始化数组时确保类型正确
-        self.reward_msg.reward_cost = [0.0 for _ in range(grid_total)]
-        self.reward_msg.occupancy.data = [-1 for _ in range(grid_total)]
+        self.reward_msg.reward_cost = [0.0 for _ in range(self.total_cells)]
+        self.reward_msg.occupancy.data = [-1 for _ in range(self.total_cells)]
         self.reward_msg.occupancy.info.width = self.grid_size
         self.reward_msg.occupancy.info.height = self.grid_size
         self.reward_msg.occupancy.info.resolution = 0.1
@@ -55,7 +64,6 @@ class MEDIRL_env(Node):
             OccupancyElevation, '/msg_local_feature', self.gem_callback, 10)
         
     def gem_callback(self, gem_msg):
-        self.get_logger().info(f"enter gem_callback")
         self.have_gem = True
         self.reward_msg.occupancy.info.origin.position = gem_msg.occupancy.info.origin.position
         self.reward_msg.occupancy.data = gem_msg.occupancy.data[:]
@@ -81,29 +89,40 @@ class MEDIRL_env(Node):
 
     def feat_input(self, feat):
         # 特征预处理，确保数值范围合理
+        feat_scaled = feat.copy()
         for i in range(3):
-            feat[i] = np.clip(10 * feat[i], -1e38, 1e38)
+            feat_scaled[i] = np.clip(10 * feat_scaled[i], -1e38, 1e38)
         
-        # 转换为PyTorch变量
-        feat_var = Variable(torch.from_numpy(np.expand_dims(feat, axis=0)).float())
-
-        t1 = time.time()
-        r_var = self.net(feat_var)  # （1，1，90，90）
-        t2 = time.time()
-        self.get_logger().info(f"推理时间: {t2-t1:.6f}秒")
+        if self.debug_timing:
+            if self.device.type == 'cuda':
+                torch.cuda.synchronize()
+            t1 = time.time()
+        with torch.inference_mode():
+            feat_tensor = torch.from_numpy(np.expand_dims(feat_scaled, axis=0)).to(
+                device=self.device, dtype=torch.float32)
+            r_var = self.net(feat_tensor)  # （1，1，180，180）
+        if self.debug_timing:
+            if self.device.type == 'cuda':
+                torch.cuda.synchronize()
+            t2 = time.time()
+            self.get_logger().info(f"MEDIRL inference: {t2-t1:.6f}s on {self.device}")
 
         # 处理输出结果
-        r = -r_var[0].data.numpy().squeeze()  # 转换为（90，90）的numpy
+        r = -r_var[0].detach().cpu().numpy().squeeze()
         
         # 归一化并裁剪到合理范围
-        r = np.clip(r, 0, 8)  # 草地场景参数
-        r = 100 * (r / 8)  # 归一化到0-100
+        r = np.clip(r, 0, 15)  # 草地场景参数
+        r = 100 * (r / 15)  # 归一化到0-100
         
         # 确保最终结果在float32范围内
         r = np.clip(r, -3.4e38, 3.4e38)
         
         # 转换为Python列表并赋值
-        self.reward_msg.reward_cost = r.flatten().tolist()
+        reward_cost = r.astype(np.float32).flatten().tolist()
+        if len(reward_cost) != self.total_cells:
+            self.get_logger().error(f"Reward cost length mismatch: {len(reward_cost)} vs {self.total_cells}")
+            return
+        self.reward_msg.reward_cost = reward_cost
         
         # 发布消息
         self.pub_reward.publish(self.reward_msg)

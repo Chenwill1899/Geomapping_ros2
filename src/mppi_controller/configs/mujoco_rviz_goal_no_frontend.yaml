@@ -1,0 +1,172 @@
+# MuJoCo closed-loop with Geomapping local_costmap and RViz goal.
+# No frontend path: MPPI tracks the RViz goal directly.
+
+experiment:
+  name: mujoco_scout
+  base_config: mujoco_external_path_base.yaml
+  seed: 123
+  output_root: results/mujoco_scout
+  run_name: "{experiment}_{controller}_seed{seed}"
+  timestamp_suffix: true
+  overwrite: false
+
+mujoco:
+  drive_mode: omni_freejoint
+  odom_topic: /scout1/odom
+  cmd_vel_topic: /joy/cmd_vel
+  odom_timeout: 1.0
+  startup_odom_timeout: 0.0
+
+simulation:
+  disable_goal_termination: false
+  max_steps: 1200
+  minimum_distance: 0.5
+
+external_path:
+  enabled: false
+
+goal_topic:
+  enabled: true
+  required: true
+  topic: /move_base_simple/goal
+
+global_path:
+  enabled: false
+
+local_goal:
+  enabled: false
+
+final_controller:
+  enabled: true
+  disable_when_local_costmap: true
+  trigger_distance: 1.2
+  rotate_threshold: 0.45
+  xy_gain: 0.45
+  lateral_gain: 0.10
+  max_vy: 0.10
+  heading_gain: 0.75
+  final_yaw_gain: 0.20
+  wz_gain: 1.1
+
+local_costmap:
+  enabled: true
+  required: true
+  topic: /msg_local_reward
+  layer: reward_cost
+  stale_timeout: 1.0
+  cost_weight: 12.0
+  cost_power: 2.0
+  unknown_cost: 100.0
+  max_cost: 100.0
+  unknown_clear_radius: 1.0
+  unknown_clear_value: 0.0
+  ground_artifact_filter:
+    enabled: true
+    min_cost: 20.0
+    max_height_abs: 0.08
+    max_roughness: 0.08
+    max_slope: 0.08
+    occupied_threshold: 50
+    clear_value: 0.0
+  footprint:
+    enabled: true
+    radius: 0.55
+    safety_margin: 0.30
+    sample_count: 32
+
+motion_policy:
+  allow_reverse: false
+  rotate_then_translate:
+    enabled: true
+    enter_angle_deg: 120.0
+    exit_angle_deg: 60.0
+
+command_filter:
+  enabled: true
+  alpha: 0.34
+  max_ax: 1.0
+  max_ay: 0.30
+  max_awz: 0.9
+  lateral_scale: 1.0
+  lateral_deadband: 0.03
+  yaw_deadband: 0.03
+
+scenario:
+  world_mode: nominal
+  initial_state: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  minimum_distance: 0.5
+  max_steps: 1200
+  obstacles:
+    static_enabled: true
+    virtual: []
+  terrain:
+    enabled: true
+    friction_base: 0.72
+    slope_scale: 0.10
+    roughness_scale: 0.25
+    friction_slope_scale: 0.18
+    friction_roughness_scale: 0.10
+    goal_relief:
+      enabled: true
+      center: auto
+      sigma: [2.0, 1.2]
+      strength: 0.75
+      floor: 0.25
+
+robot:
+  max_vx: 1.0
+  max_vy: 0.30
+  max_wz: 1.2
+  max_ax: 1.0
+  max_ay: 0.35
+  max_awz: 1.2
+  velocity_lag_beta: 0.30
+  radius: 0.55
+  safety_dist: 0.30
+
+mppi:
+  weights: [2.4, 2.4, 0.35, 0.0, 0.0, 0.0]
+  std_normal: [0.42, 0.24, 0.30]
+  num_trajectories: 896
+  draw_num_traj: 20
+  obstacle_weight: 0.0
+  obstacle_soft_weight: 0.0
+  obstacle_influence_dist: 0.0
+  control_weight: 0.015
+  smooth_weight: 2.0
+  accel_weight: 0.45
+  lateral_weight: 0.35
+  yaw_rate_weight: 0.32
+  jerk_weight: 0.65
+  update_smoothing_alpha: [0.30, 0.78, 0.78]
+  goal_change_reset_distance: 0.75
+  goal_change_reset_yaw: 1.0
+  goal_progress_weight: 32.0
+  heading_to_goal_weight: 0.12
+  heading_to_goal_min_distance: 0.6
+  path_tracking_weight: 0.0
+  path_tracking_tolerance: 0.20
+  path_progress_weight: 0.0
+
+default_controller: nominal_numpy
+controllers:
+  - name: nominal_numpy
+    method: nominal
+    backend: numpy
+
+visualization:
+  plots: false
+  animation: false
+  terrain_grid_resolution: 48
+
+rviz:
+  enabled: true
+  frame_id: map
+  sample_count: 30
+  sample_topic: /fdm_mppi/sample_rollouts
+  sample_path_topic_prefix: /fdm_mppi/sample_rollout_
+  selected_path_topic: /fdm_mppi/selected_rollout
+  history_path_topic: /fdm_mppi/history_path
+  history_max_points: 3000
+  robot_topic: /fdm_mppi/cube_robot
+  robot_scale: [0.93, 0.70, 0.35]

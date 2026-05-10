@@ -8,6 +8,7 @@ Panels:
         - /Status1
         - /PointCloud21
         - /PointCloud22
+        - /Path1
       Splitter Ratio: 0.5
     Tree Height: 549
   - Class: rviz_common/Selection
@@ -63,11 +64,11 @@ Visualization Manager:
       Decay Time: 0
       Enabled: true
       Invert Rainbow: false
-      Max Color: 255; 255; 255
+      Max Color: 128; 0; 128
       Max Intensity: 100
-      Min Color: 0; 0; 0
+      Min Color: 255; 255; 255
       Min Intensity: 0
-      Name: PointCloud2
+      Name: cost_pointcloud
       Position Transformer: XYZ
       Selectable: true
       Size (Pixels): 3
@@ -81,7 +82,7 @@ Visualization Manager:
         Reliability Policy: Reliable
         Value: /cost_pointcloud
       Use Fixed Frame: true
-      Use rainbow: true
+      Use rainbow: false
       Value: true
     - Alpha: 1
       Autocompute Intensity Bounds: true
@@ -95,7 +96,7 @@ Visualization Manager:
       Color: 255; 255; 255
       Color Transformer: Intensity
       Decay Time: 0
-      Enabled: true
+      Enabled: false
       Invert Rainbow: false
       Max Color: 255; 255; 255
       Max Intensity: 100
@@ -116,6 +117,60 @@ Visualization Manager:
         Value: /elevation_pointcloud
       Use Fixed Frame: true
       Use rainbow: true
+      Value: false
+    - Alpha: 1
+      Buffer Length: 1
+      Class: rviz_default_plugins/Path
+      Color: 0; 0; 0
+      Enabled: false
+      Head Diameter: 0.30000001192092896
+      Head Length: 0.20000000298023224
+      Length: 0.30000001192092896
+      Line Style: Lines
+      Line Width: 0.029999999329447746
+      Name: Path
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
+      Pose Color: 255; 85; 255
+      Pose Style: None
+      Radius: 0.029999999329447746
+      Shaft Diameter: 0.10000000149011612
+      Shaft Length: 0.10000000149011612
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /smooth_path
+      Value: false
+    - Class: rviz_default_plugins/Marker
+      Enabled: true
+      Name: Marker
+      Namespaces:
+        {}
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /fdm_mppi/cube_robot
+      Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: MPPI_Rollouts
+      Namespaces:
+        {}
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /fdm_mppi/sample_rollouts
       Value: true
   Enabled: true
   Global Options:
@@ -147,7 +202,7 @@ Visualization Manager:
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /goal_pose
+        Value: /move_base_simple/goal
     - Class: rviz_default_plugins/PublishPoint
       Single click: true
       Topic:
@@ -163,25 +218,25 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 61.86355209350586
+      Distance: 32.09020233154297
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: 23.42559242248535
-        Y: -4.0432305335998535
-        Z: 5.86378812789917
+        X: 7.514132022857666
+        Y: 1.0278375148773193
+        Z: 1.6864008903503418
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 1.3803977966308594
+      Pitch: 0.9003982543945312
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz)
-      Yaw: 3.3053994178771973
+      Yaw: 3.2253973484039307
     Saved: ~
 Window Geometry:
   Displays:

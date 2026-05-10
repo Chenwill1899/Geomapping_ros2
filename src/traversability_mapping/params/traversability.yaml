@@ -2,7 +2,9 @@ traversability_mapping:
   ros__parameters:
     planning: 
       cost_max: 50.0   #大于等于100就是障碍物  #cost (2-15)映射到0-100
-      white_cost: 100  #空白区域代价60  20   mppisim:100
+      white_cost: 100  #保留旧参数兼容
+      unknown_cost: 0  #未知区默认代价；不要把未观测平地区域直接染成高代价
+      reward_obstacle_threshold: 95  #MEDIRL reward 超过该值才做障碍膨胀
       cost_bias: 1     #地图代价系数100
       search_time: 0.17
       steer_length: 0.2
@@ -11,9 +13,13 @@ traversability_mapping:
       max_tree_node_nums: 20000
       goal_bias: 0.15   #初次搜索终点路径的偏移概率
       time_roll: 3   #滚动规划时间，s  slam:3   odom:3
-      inflate_r: 0  #代价地图膨胀半径0.3  sim:0
+      inflate_r: 0.85  #规划用膨胀层半径，覆盖车体半径和安全余量
       follow_dis: 3 #跟综距离  mpc+slam：1.5  cmu或odom:3
-      goal_local_dis: 100  #局部终点距离 实际18，仿真无穷
+      goal_local_dis: 7.0  #长目标只裁成当前局部地图内的滚动子目标
+    mapping:
+      local_publish_every_scan: true
+      visualization_hz: 2.0
+      publish_global_debug: false
     filter:
       filterflag: true  #借用直接从点云判断
       # filterHeightLimit: 0.06 #草地：0.06   道路0.05  两点间的高度查 downsample
@@ -33,5 +39,3 @@ traversability_mapping:
       visitflag: false #在mpl中，未扫描到区域代价无穷大
 
  
-
-

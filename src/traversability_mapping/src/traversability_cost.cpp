@@ -40,6 +40,7 @@ private:
     pcl::PointCloud<PointType>::Ptr local_step_map;
     Eigen::MatrixXf slope = Eigen::MatrixXf::Zero(MAP_SIZE, MAP_SIZE);
     Eigen::MatrixXf step = Eigen::MatrixXf::Zero(MAP_SIZE, MAP_SIZE);
+    Eigen::Matrix<float, 3, 9> plane_fit_pinv_;
 
     // TF相关
     std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
@@ -99,6 +100,12 @@ public:
         local_feature.height.resize(map_size, 0.0f);
         local_feature.roughness.resize(map_size, 0.0f);
         local_feature.cost_map.resize(map_size, 0.0f);  // 注意：ROS 2消息字段名使用蛇形命名法
+
+        Eigen::Matrix<float, 9, 3> left_m;
+        left_m << 1,1,1, 1,2,1, 1,3,1,
+                  2,1,1, 2,2,1, 2,3,1,
+                  3,1,1, 3,2,1, 3,3,1;
+        plane_fit_pinv_ = (left_m.transpose() * left_m).inverse() * left_m.transpose();
     }
 
    // 修改get_robot_position()函数中的TF查询部分
@@ -135,7 +142,6 @@ bool get_robot_position() {
         step.setZero();
 
         // 重置特征地图数据
-        size_t map_size = localMapArrayLength * localMapArrayLength;
         std::fill(local_feature.occupancy.data.begin(), local_feature.occupancy.data.end(), -1);
         std::fill(local_feature.height.begin(), local_feature.height.end(), 0.0f);
         std::fill(local_feature.roughness.begin(), local_feature.roughness.end(), 0.0f);
@@ -208,12 +214,6 @@ bool get_robot_position() {
     }
 
     void compute_terrain(const Eigen::MatrixXf& dem_matrix) {
-        // 初始化最小二乘拟合矩阵
-        Eigen::Matrix<float, 9, 3> left_m;
-        left_m << 1,1,1, 1,2,1, 1,3,1,
-                  2,1,1, 2,2,1, 2,3,1,
-                  3,1,1, 3,2,1, 3,3,1;
-
         Eigen::Matrix3f dem_matrix_nn;  // 3x3邻域矩阵
 
         // 遍历所有非边缘点（避免越界）
@@ -228,7 +228,7 @@ bool get_robot_position() {
                 // 检查邻域是否有无效值（0）
                 bool has_zero = (dem_matrix_nn.array() == 0).any();
                 if (!has_zero) {
-                    slope(n_row, n_len) = compute_theta(dem_matrix_nn, left_m);
+                    slope(n_row, n_len) = compute_theta(dem_matrix_nn);
                 } else {
                     slope(n_row, n_len) = 0.0f;
                 }
@@ -254,17 +254,16 @@ bool get_robot_position() {
         return max_height_diff;
     }
 
-    float compute_theta(const Eigen::Matrix3f& dem_nn, const Eigen::MatrixXf& left_m) {
+    float compute_theta(const Eigen::Matrix3f& dem_nn) {
         // 构造最小二乘右边项（9个点的高程）
-        Eigen::VectorXf right_m(9);
+        Eigen::Matrix<float, 9, 1> right_m;
         for (int i = 0; i < 3; ++i) {
             for (int j = 0; j < 3; ++j) {
                 right_m[i*3 + j] = dem_nn(i, j);
             }
         }
 
-        // QR分解求解平面系数
-        Eigen::Vector3f x = left_m.fullPivHouseholderQr().solve(right_m);
+        Eigen::Vector3f x = plane_fit_pinv_ * right_m;
         // 计算坡度（弧度）
         return acos(1.0f / sqrt(x[0]*x[0] + x[1]*x[1] + 1.0f));
     }

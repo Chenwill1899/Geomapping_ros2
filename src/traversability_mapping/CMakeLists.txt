@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.8)
 project(traversability_mapping) # 确认项目名称与 package.xml 中的 <name> 标签完全一致
 
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
@@ -160,9 +164,17 @@ install(TARGETS traversability_map
 # target_link_libraries(traversability_prm ${PCL_LIBRARIES} ${OpenCV_LIBRARIES})
 
 # # Path Planner
-# add_executable(traversability_path src/traversability_path.cpp)
-# ament_target_dependencies(traversability_path ${ROS2_COMMON_DEPS})
-# target_link_libraries(traversability_path ${PCL_LIBRARIES} ${OpenCV_LIBRARIES})
+add_executable(traversability_path src/traversability_path.cpp)
+ament_target_dependencies(traversability_path ${ROS2_COMMON_DEPS})
+target_link_libraries(traversability_path
+  ${PCL_LIBRARIES}
+  ${OpenCV_LIBRARIES}
+  ${PROJECT_NAME}__rosidl_generator_cpp
+  ${PROJECT_NAME}__rosidl_typesupport_cpp
+)
+install(TARGETS traversability_path
+  RUNTIME DESTINATION lib/${PROJECT_NAME}
+)
 
 # add_executable(traversability_record src/traversability_record.cpp)
 # ament_target_dependencies(traversability_record ${ROS2_COMMON_DEPS})

@@ -8,6 +8,7 @@
 #include "planner/sampler.h"
 #include "planner/planningState.h"
 #include "visualization/visualization.hpp"
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <cfloat>
@@ -91,6 +92,10 @@ private:
     std::vector<mapCell_t*> observingList2; // thread 2: calculate traversability of new observed cells
 
     bool haveRobotPoint;
+    bool local_publish_every_scan_;
+    bool publish_global_debug_;
+    double visualization_hz_;
+    int64_t last_visualization_pub_time_ns_;
 
     //用于horizen规划
     // PointType lastRobotPoint;
@@ -133,6 +138,8 @@ private:
     double final_path_use_time_;
     double cost_max_;
     double white_cost_;
+    double unknown_cost_;
+    double reward_obstacle_threshold_;
     double goal_bias_;
     double cost_bias_;
     double follow_dis_;
@@ -159,6 +166,7 @@ private:
     int runTime = 0;
     int lastGoalIndex = 1;
     bool isSendGoal=false;
+    bool has_valid_local_goal_=false;
     rclcpp::Time goal_start_time;
     double time_roll_;
     float inflate_r_;
@@ -169,7 +177,8 @@ public:
     TraversabilityMapping():
         rclcpp::Node("traversability_mapping"),
         pubCount(1),
-        mapArrayCount(0)
+        mapArrayCount(0),
+        last_visualization_pub_time_ns_(0)
     {
         // Initialize pointers to nullptr to prevent crashes
         mapArrayInd = nullptr;
@@ -202,6 +211,12 @@ public:
         this->declare_parameter<double>("planning.white_cost", 0.0);
         this->get_parameter("planning.white_cost", white_cost_);
 
+        this->declare_parameter<double>("planning.unknown_cost", white_cost_);
+        this->get_parameter("planning.unknown_cost", unknown_cost_);
+
+        this->declare_parameter<double>("planning.reward_obstacle_threshold", 95.0);
+        this->get_parameter("planning.reward_obstacle_threshold", reward_obstacle_threshold_);
+
         this->declare_parameter<double>("planning.cost_bias", 0.5);
         this->get_parameter("planning.cost_bias", cost_bias_);
 
@@ -220,6 +235,14 @@ public:
         this->declare_parameter<double>("planning.goal_local_dis", 15.0);
         this->get_parameter("planning.goal_local_dis", goal_local_dis_);
 
+        this->declare_parameter<bool>("mapping.local_publish_every_scan", true);
+        this->get_parameter("mapping.local_publish_every_scan", local_publish_every_scan_);
+
+        this->declare_parameter<double>("mapping.visualization_hz", 2.0);
+        this->get_parameter("mapping.visualization_hz", visualization_hz_);
+
+        this->declare_parameter<bool>("mapping.publish_global_debug", false);
+        this->get_parameter("mapping.publish_global_debug", publish_global_debug_);
 
         pool_max_nums_ = 2 * max_tree_node_nums_; //必须要大于搜索的最大节点数
         sampler_.setGoalBiased(goal_bias_);
@@ -240,8 +263,8 @@ public:
         //get goal
         subGoal = this->create_subscription<geometry_msgs::msg::PoseStamped>("/move_base_simple/goal", 5, std::bind(&TraversabilityMapping::goalPosHandler, this, std::placeholders::_1));
         pubLocalGoal = this->create_publisher<geometry_msgs::msg::PoseStamped>("/RRT_goal", rclcpp::QoS(1).reliability(rclcpp::ReliabilityPolicy::BestEffort)); //局部跟随点
-        //global path
-        pubSmoothPath = this->create_publisher<nav_msgs::msg::Path>("/smooth_path", 5);
+    //global path
+    pubSmoothPath = this->create_publisher<nav_msgs::msg::Path>("/smooth_path", 5);
 
         // RRTstarPlanTimer = create_wall_timer(std::chrono::duration<double>(0.2), std::bind(&TraversabilityMapping::RRTstarHandler, this));
         RRTstarPlanTimer = this->create_wall_timer(std::chrono::duration<double>(0.2), std::bind(&TraversabilityMapping::RRTstarHandler, this));
@@ -823,31 +846,43 @@ public:
 
     bool isStateValid(const Eigen::Vector2d &pos)
     {
-        PointType tmpPos;
-        tmpPos.x = pos[0];
-        tmpPos.y = pos[1];
-        tmpPos.z = -1;
-        ipoint2 resPoint;
-        if(!Point2Gird(tmpPos, resPoint))
+        bool in_map = false;
+        const double cost = inflatedCostAt(pos, &in_map);
+        if(!in_map)
             return true;
-        int gridIndex = resPoint.x + resPoint.y * mapLength*(int)mapInvResolution ;
-        // cout<<"cost_max:"<<cost_max_<<endl;
-        if(msgElevationGlobal.occupancy.data[gridIndex] > cost_max_-0.1){
+        if(cost > cost_max_-0.1){
             // RCLCPP_WARN(get_logger(), "This point is occ");
             return true;}
         return false;
     }
 
-    double cost_from_costMap(const Eigen::Vector2d &point)
+    double inflatedCostAt(const Eigen::Vector2d &point, bool *in_map = nullptr)
     {
         PointType tmpPos;
         tmpPos.x = point[0];
         tmpPos.y = point[1];
         tmpPos.z = -1;
         ipoint2 resPoint;
-        Point2Gird(tmpPos, resPoint);
+        if(!Point2Gird(tmpPos, resPoint)){
+            if (in_map) *in_map = false;
+            return cost_max_;
+        }
         int gridIndex = resPoint.x + resPoint.y * mapLength*(int)mapInvResolution;
-        return static_cast<double>(0.01 * msgElevationGlobal.occupancy.data[gridIndex]); // Cast to double
+        if (gridIndex < 0 || gridIndex >= static_cast<int>(msgElevationGlobal.occupancy.data.size())) {
+            if (in_map) *in_map = false;
+            return cost_max_;
+        }
+        if (in_map) *in_map = true;
+        return static_cast<double>(msgElevationGlobal.occupancy.data[gridIndex]);
+    }
+
+    double cost_from_costMap(const Eigen::Vector2d &point)
+    {
+        bool in_map = false;
+        const double cost = inflatedCostAt(point, &in_map);
+        if (!in_map)
+            return 1.0;
+        return 0.01 * std::clamp(cost, 0.0, 100.0);
         // RCLCPP_WARN(get_logger(), "This point is occ");
     }
 
@@ -898,7 +933,81 @@ public:
         return true;
     }
 
+    Eigen::Vector2d selectLocalPlanningGoal(const Eigen::Vector2d &global_goal)
+    {
+        has_valid_local_goal_ = false;
+        Eigen::Vector2d to_goal = global_goal - start_;
+        const double dist_global = to_goal.norm();
+        if (dist_global < 1e-3){
+            has_valid_local_goal_ = !isStateValid(global_goal);
+            return global_goal;
+        }
+
+        const double horizon = std::min(goal_local_dis_, localMapLength * 0.45);
+        const Eigen::Vector2d direction = to_goal / dist_global;
+        const Eigen::Vector2d lateral(-direction[1], direction[0]);
+        const double target_distance = std::min(dist_global, horizon);
+        const bool final_goal_in_local_range = dist_global <= horizon;
+
+        std::vector<double> forward_scales = {1.0, 0.85, 0.7, 0.55};
+        std::vector<double> lateral_offsets = {0.0, 0.8, -0.8, 1.6, -1.6, 2.4, -2.4};
+
+        Eigen::Vector2d best_goal = start_ + direction * target_distance;
+        double best_score = -DBL_MAX;
+        bool found = false;
+        for (double scale : forward_scales){
+            const double forward = std::max(1.0, target_distance * scale);
+            for (double offset : lateral_offsets){
+                Eigen::Vector2d candidate = start_ + direction * forward + lateral * offset;
+                if (final_goal_in_local_range && std::abs(offset) < 1e-6 && scale == 1.0){
+                    candidate = global_goal;
+                }
+                if (isStateValid(candidate)){
+                    continue;
+                }
+                if (!isSegmentValid(start_, candidate, horizon + 0.5)){
+                    continue;
+                }
+
+                const double progress = (candidate - start_).dot(direction);
+                const double lateral_penalty = std::abs((candidate - start_).dot(lateral));
+                const double inflated_cost = inflatedCostAt(candidate);
+                const double goal_distance = (global_goal - candidate).norm();
+                const double score = progress - 0.25 * lateral_penalty - 0.03 * inflated_cost - 0.05 * goal_distance;
+                if (score > best_score){
+                    best_score = score;
+                    best_goal = candidate;
+                    found = true;
+                }
+            }
+        }
+
+        if (!found){
+            RCLCPP_WARN(get_logger(), "No collision-free local subgoal found; waiting for a new RViz goal");
+            return start_;
+        }
+        has_valid_local_goal_ = true;
+        return best_goal;
+    }
+
+    void clearActiveGoalPlanning()
+    {
+        final_path_.clear();
+        sampleFinalPath.clear();
+        path_list_.clear();
+        solution_cost_time_pair_list_.clear();
+        PlanningState_ = WithoutGoal;
+        lastGoalIndex = 1;
+        isSendGoal = false;
+        has_valid_local_goal_ = false;
+        nav_msgs::msg::Path empty_path;
+        empty_path.header.frame_id = "map";
+        empty_path.header.stamp = this->get_clock()->now();
+        pubSmoothPath->publish(empty_path);
+    }
+
     void goalPosHandler(const geometry_msgs::msg::PoseStamped::ConstSharedPtr goal){
+        std::lock_guard<std::mutex> lock(mtx);
 
         // For ROS2, file operations are not typically tied to callbacks this way.
         // If file saving is required, consider a separate service or a dedicated thread/function.
@@ -916,13 +1025,18 @@ public:
         PlanningState_ = Global;
         lastGoalIndex = 1;
         isSendGoal = false; //直接发送终点标志位
+        has_valid_local_goal_ = false;
+        final_path_.clear();
+        sampleFinalPath.clear();
+        path_list_.clear();
+        solution_cost_time_pair_list_.clear();
 
         return;
     }
 
 
     void RRTstarHandler() { // 移除了 TimerEvent 参数
-        // std::lock_guard<std::mutex> lock(mtx);
+        std::lock_guard<std::mutex> lock(mtx);
         try{
             transform = tf_buffer_->lookupTransform("map","base_link", tf2::TimePointZero);
             robotPoint.x = transform.transform.translation.x;
@@ -960,16 +1074,17 @@ public:
             RCLCPP_WARN(get_logger(), "Recive goal point, start_planning");
             goal_start_time = this->get_clock()->now();
 
-            //计算朝终点方向20m的点
             Eigen::Vector2d goal_inital;
             goal_inital<< goalPoint.x, goalPoint.y;
-            double dist_global = (goal_inital-start_).norm() ;
-            if(dist_global>goal_local_dis_){
-                Eigen::Vector2d direction = (goal_inital-start_)/dist_global;
-                goal_ = start_+ direction*goal_local_dis_;
-            }
-            else{
-                goal_<< goalPoint.x, goalPoint.y;
+            goal_ = selectLocalPlanningGoal(goal_inital);
+            if(!has_valid_local_goal_ || isStateValid(goal_)){
+                RCLCPP_WARN(
+                    get_logger(),
+                    "RViz goal/local subgoal is in collision or out of bound; clearing planner state and waiting for next goal"
+                );
+                clearActiveGoalPlanning();
+                haveRobotPoint = false;
+                return;
             }
 
             double distDiffNorm = (goal_-start_).norm() ;
@@ -1012,7 +1127,6 @@ public:
 
         }
         else if(PlanningState_ == Roll){
-            RCLCPP_WARN(get_logger(), "Roll planning ");
             sampler_.initWithoutGoal(start_, gridMapOrigin, gridMapRange);  //传入地图参数用于后面采样，地图左下角为起点
             double sum_time = (this->get_clock()->now() - goal_start_time).seconds();
             if(sum_time < time_roll_ ){    //时间未到，发点
@@ -1056,11 +1170,12 @@ public:
                     // cout<<"111111111111111"<<endl;
                     // vis_ptr_->visualize_a_ball(curPoint, 0.1, "waypoint", visualization::Color::green); //跟踪点，距离2.5m
                 }
+                haveRobotPoint = false;
+                return;
             }
             else{    //时间到了，重规划
                 goal_start_time = this->get_clock()->now();
                 PlanningState_ = Global;
-                return;
             }
         }
 
@@ -1162,7 +1277,8 @@ public:
         nav_msgs::msg::Path splinePath;
         geometry_msgs::msg::PoseStamped tmpPose;
         tmpPose.header.frame_id = "map";
-        for (const auto &pt : path)
+        std::vector<Eigen::Vector3d> currentPath = filterSmoothPath(pathFromCurrent(path));
+        for (const auto &pt : currentPath)
         {
             tmpPose.pose.position.x = pt[0];
             tmpPose.pose.position.y = pt[1];
@@ -1180,9 +1296,8 @@ public:
         // NOTE: For the sake of direct conversion, I'm commenting out the spline part.
         // You would need a ROS2 equivalent or reimplement `CubicSplineInterpolator`
         // if this is a custom class.
-        pubSmoothPath->publish(originPath); // Publish original path for now if smoothing library is an issue.
-        splinePath = originPath; // For direct conversion, assume splinePath is same as originPath if interpolation is skipped.
-
+        pubSmoothPath->publish(originPath);
+        splinePath = originPath;
 
         // Extract Path
         path.clear();
@@ -1190,6 +1305,86 @@ public:
             Eigen::Vector3d tmpNode(splinePath.poses[i].pose.position.x, splinePath.poses[i].pose.position.y,visHeight);
             path.push_back(tmpNode);
         }
+    }
+
+    std::vector<Eigen::Vector3d> pathFromCurrent(const std::vector<Eigen::Vector3d> &path) const {
+        std::vector<Eigen::Vector3d> trimmed;
+        Eigen::Vector3d current(robotPoint.x, robotPoint.y, visHeight);
+        trimmed.push_back(current);
+
+        if (path.empty()){
+            return trimmed;
+        }
+
+        if (path.size() == 1){
+            if ((path.front().head<2>() - current.head<2>()).norm() > 0.2){
+                trimmed.push_back(path.front());
+            }
+            return trimmed;
+        }
+
+        size_t best_segment = 0;
+        double best_dist_sq = std::numeric_limits<double>::max();
+        for (size_t i = 0; i + 1 < path.size(); ++i){
+            const Eigen::Vector2d a = path[i].head<2>();
+            const Eigen::Vector2d b = path[i + 1].head<2>();
+            const Eigen::Vector2d ab = b - a;
+            const double ab_sq = ab.squaredNorm();
+            double t = 0.0;
+            if (ab_sq > 1e-6){
+                t = std::clamp((current.head<2>() - a).dot(ab) / ab_sq, 0.0, 1.0);
+            }
+            const Eigen::Vector2d projection = a + t * ab;
+            const double dist_sq = (current.head<2>() - projection).squaredNorm();
+            if (dist_sq < best_dist_sq){
+                best_dist_sq = dist_sq;
+                best_segment = i;
+            }
+        }
+
+        for (size_t i = best_segment + 1; i < path.size(); ++i){
+            if ((path[i].head<2>() - trimmed.back().head<2>()).norm() < 0.2){
+                continue;
+            }
+            trimmed.push_back(path[i]);
+        }
+
+        if (trimmed.size() == 1 &&
+            (path.back().head<2>() - trimmed.back().head<2>()).norm() > 0.05){
+            trimmed.push_back(path.back());
+        }
+        return trimmed;
+    }
+
+    std::vector<Eigen::Vector3d> filterSmoothPath(const std::vector<Eigen::Vector3d> &path) {
+        if (path.size() < 3){
+            return path;
+        }
+
+        std::vector<Eigen::Vector3d> filtered;
+        filtered.reserve(path.size());
+        filtered.push_back(path.front());
+
+        for (size_t i = 1; i + 1 < path.size(); ++i){
+            Eigen::Vector3d candidate = 0.25 * path[i - 1] + 0.5 * path[i] + 0.25 * path[i + 1];
+            candidate[2] = visHeight;
+            const Eigen::Vector2d candidate2d(candidate[0], candidate[1]);
+            const Eigen::Vector2d last2d(filtered.back()[0], filtered.back()[1]);
+            const Eigen::Vector2d next2d(path[i + 1][0], path[i + 1][1]);
+
+            if (!isStateValid(candidate2d) &&
+                isSegmentValid(last2d, candidate2d) &&
+                isSegmentValid(candidate2d, next2d)){
+                filtered.push_back(candidate);
+            }else{
+                filtered.push_back(path[i]);
+            }
+        }
+
+        if ((path.back().head<2>() - filtered.back().head<2>()).norm() >= 0.05){
+            filtered.push_back(path.back());
+        }
+        return filtered;
     }
 
     void generateBox(BoxPointType &boxpoint, const PointType *robotcenter, std::vector<float> boxlengths){
@@ -1206,16 +1401,16 @@ public:
     }
 
     void rewardHandler(const elevation_msgs::msg::OccupancyElevation::ConstSharedPtr rewardMsg){
-        // std::lock_guard<std::mutex> lock(mtx);
+        std::lock_guard<std::mutex> lock(mtx);
         rewardMap = *rewardMsg;
-        elevation_msgs::msg::OccupancyElevation rewardInflate = rewardMap;
+        std::vector<float> inflated_reward_cost = rewardMap.reward_cost;
         //膨胀代价地图
         int sizeMap = static_cast<int>(rewardMap.occupancy.data.size()); // Cast to int
         int inflationSize = static_cast<int>(inflate_r_ / rewardMap.occupancy.info.resolution);
         for (int i = 0; i < sizeMap; ++i) {
             int idX = static_cast<int>(i % rewardMap.occupancy.info.width);
             int idY = static_cast<int>(i / rewardMap.occupancy.info.width);
-            if (rewardMap.reward_cost[i] > (cost_max_-0.1f)){ // 使用 f 后缀
+            if (rewardMap.reward_cost[i] > reward_obstacle_threshold_){
                 for (int m = -inflationSize; m <= inflationSize; ++m) {
                     for (int n = -inflationSize; n <= inflationSize; ++n) {
                         int newIdX = idX + m;
@@ -1223,7 +1418,7 @@ public:
                         if (newIdX < 0 || newIdX >= static_cast<int>(rewardMap.occupancy.info.width) || newIdY < 0 || newIdY >= static_cast<int>(rewardMap.occupancy.info.height)) // Cast for comparison
                             continue;
                         int index = newIdX + newIdY * static_cast<int>(rewardMap.occupancy.info.width); // Cast for multiplication
-                        rewardInflate.reward_cost[index] = cost_max_;
+                        inflated_reward_cost[index] = cost_max_;
                     }
                 }
             }
@@ -1269,22 +1464,20 @@ public:
                 mapCell_t *thisCell2 = grid2Cell(&thisGrid2);
                 if (thisCell2) {
                     int index = i + j * localMapArrayLength;
-                    updateCellCost2(thisCell2, rewardMap.reward_cost[index], rewardInflate.reward_cost[index]);
+                    updateCellCost2(thisCell2, rewardMap.reward_cost[index], inflated_reward_cost[index]);
                 }
             }
         }
     }
 
-    void updateCellCost2(mapCell_t *thisCell, float &cost, float &costInflate){
+    void updateCellCost2(mapCell_t *thisCell, const float &cost, const float &costInflate){
         // std::cout<<"cost will be updated:"<<cost<<endl;
         thisCell->updateCost(cost, costInflate);
     }
 
     void cloudHandler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr laserCloudMsg){
         
-        // std::lock_guard<std::mutex> lock(mtx);
-        // Lock thread
-        // std::lock_guard<std::mutex> lock(mtx);
+        std::lock_guard<std::mutex> lock(mtx);
         // Get Robot Position
         if (getRobotPosition() == false)
             return;
@@ -1301,12 +1494,6 @@ public:
         // caster_->setRrigin(robotOrigin);
         pcl::fromROSMsg(*laserCloudMsg, *laserCloud);
         kdtree_ptr->Build((*laserCloud).points);
-        // publish local occupancy grid map
-        elevationMapProcess();
-
-
-        
-
         // Register New Scan
         updateElevationMap();
 
@@ -1323,7 +1510,12 @@ public:
         //初始化占据栅格并更新
         localMapProcess();
 
-        publishMap();
+        const bool publish_debug = shouldPublishVisualization();
+        if (publish_debug && hasDebugCloudSubscribers()){
+            elevationMapProcess();
+        }
+
+        publishMap(publish_debug);
     }
 
     //更新点云高度z
@@ -1578,19 +1770,42 @@ public:
                 if (Kxz(i,j) < 0.0f) Kxz(i,j) = 0.0f; // Use float literal
     }
 
-    void publishMap(){
-        // Publish Occupancy Grid Map and Elevation Map
-        pubCount++;
-        if (pubCount > visualizationFrequency){
-            pubCount = 1;
+    bool shouldPublishVisualization(){
+        if (visualization_hz_ <= 0.0){
+            return true;
+        }
 
+        const auto now = this->get_clock()->now();
+        const int64_t now_ns = now.nanoseconds();
+        const int64_t period_ns = static_cast<int64_t>(1.0e9 / visualization_hz_);
+        if (last_visualization_pub_time_ns_ == 0 ||
+            now_ns - last_visualization_pub_time_ns_ >= period_ns){
+            last_visualization_pub_time_ns_ = now_ns;
+            return true;
+        }
+        return false;
+    }
+
+    bool hasDebugCloudSubscribers() const {
+        return pubElevationCloud->get_subscription_count() != 0 ||
+               pubCostCloud->get_subscription_count() != 0;
+    }
+
+    void publishMap(bool publish_debug){
+        if (local_publish_every_scan_ || publish_debug){
             publishLocalMap(); //发布给局部特征
-            publishTraversabilityMap(); //可视化高层图
-            publishCostMap();  //发布代价点云
+        }
 
+        if (!publish_debug){
+            return;
+        }
+
+        publishTraversabilityMap(); //可视化高层图
+        publishCostMap();  //发布代价点云
+
+        if (publish_global_debug_){
             publishOccupancyGlobalMap();    //全局代价地图，占据栅格格式
             publishOccupancyElevationGlobalMap();  //全局地图特征
-
         }
     }
 
@@ -1616,7 +1831,7 @@ public:
         std::fill(msgLocalHeight.height.begin(), msgLocalHeight.height.end(), -FLT_MAX);
         std::fill(msgLocalHeight.cost_map.begin(), msgLocalHeight.cost_map.end(), 0); // 使用 cost_map
         std::fill(msgLocalHeight.roughness.begin(), msgLocalHeight.roughness.end(), -FLT_MAX);
-        std::fill(msgLocalHeight.reward_cost.begin(), msgLocalHeight.reward_cost.end(), white_cost_);  // 使用 reward_cost //不要设置FLT_MAX，否则会导致MPL第一次规划不出来
+        std::fill(msgLocalHeight.reward_cost.begin(), msgLocalHeight.reward_cost.end(), unknown_cost_);  // 使用 reward_cost //不要设置FLT_MAX，否则会导致MPL第一次规划不出来
 
         // local map origin x and y
         localMapOriginPoint.x = robotPoint.x - localMapLength / 2.0f; // Add f suffix
@@ -1752,7 +1967,7 @@ public:
         msgElevationGlobal.height.resize(msgElevationGlobal.occupancy.info.width * msgElevationGlobal.occupancy.info.height);
         msgElevationGlobal.roughness.resize(msgElevationGlobal.occupancy.info.width * msgElevationGlobal.occupancy.info.height);
         msgElevationGlobal.cost_map.resize(msgElevationGlobal.occupancy.info.width * msgElevationGlobal.occupancy.info.height); // cost_map
-        std::fill(msgElevationGlobal.occupancy.data.begin(), msgElevationGlobal.occupancy.data.end(), static_cast<int8_t>(white_cost_)); // Cast to int8_t
+        std::fill(msgElevationGlobal.occupancy.data.begin(), msgElevationGlobal.occupancy.data.end(), static_cast<int8_t>(unknown_cost_)); // Cast to int8_t
         std::fill(msgElevationGlobal.height.begin(), msgElevationGlobal.height.end(), -FLT_MAX);
         std::fill(msgElevationGlobal.roughness.begin(), msgElevationGlobal.roughness.end(), -FLT_MAX);
         std::fill(msgElevationGlobal.cost_map.begin(), msgElevationGlobal.cost_map.end(), 0); // cost_map

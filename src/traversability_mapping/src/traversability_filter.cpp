@@ -118,8 +118,8 @@ public:
         laserCloudObstacles.reset(new pcl::PointCloud<PointType>());
 
         // cv::Mat 初始化保持不变
-        obstacleMatrix = cv::Mat(N_SCAN, Horizon_SCAN, CV_32S, cv::Scalar::all(-1));
-        rangeMatrix =  cv::Mat(N_SCAN, Horizon_SCAN, CV_32F, cv::Scalar::all(-1));
+        obstacleMatrix.setTo(cv::Scalar::all(-1));
+        rangeMatrix.setTo(cv::Scalar::all(-1));
 
         // std::vector 初始化保持不变
         laserCloudMatrix.resize(N_SCAN);

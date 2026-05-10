@@ -1,0 +1,115 @@
+simulation:
+  sampling_rate: 10.0
+  time_horizon: 2.5
+  initial_state: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  minimum_distance: 0.5
+  max_steps: 850
+  without_heading: true
+  print_out: false
+  world_mode: mujoco
+  disable_goal_termination: true
+
+mppi:
+  backend: numpy
+  state_dim: 6
+  control_dim: 3
+  num_trajectories: 384
+  draw_num_traj: 50
+  exploration_variance: 1200.0
+  weights: [2.5, 2.5, 1.2, 0.0, 0.0, 0.0]
+  dist_type: 2
+  std_normal: [0.20, 0.03, 0.18]
+  std_slack: 0.1
+  lambda: 0.7
+  obstacle_weight: 0.0
+  obstacle_soft_weight: 0.0
+  obstacle_influence_dist: 0.0
+  cbf_weight: 0.0
+  control_weight: 0.02
+  smooth_weight: 2.0
+  lateral_weight: 0.35
+  yaw_rate_weight: 0.08
+  accel_weight: 0.20
+  jerk_weight: 0.08
+  terrain_risk_weight: 0.0
+  terrain_risk_power: 2.0
+  terrain_risk_threshold: 0.0
+  terrain_risk_mode: excess
+  path_tracking_weight: 8.0
+  path_tracking_tolerance: 0.15
+  path_progress_weight: 1.2
+  beta_1: 0.5
+  beta_2: 0.8
+  beta_3: 0.5
+  sg_window: 51
+  sg_poly_order: 3
+  soft_cbf: false
+
+robot:
+  state_dim: 6
+  max_vx: 1.5
+  max_vy: 0.1
+  max_wz: 1.0
+  max_ax: 0.8
+  max_ay: 0.8
+  max_awz: 0.8
+  velocity_lag_beta: 0.25
+  radius: 0.35
+  safety_dist: 0.10
+  obstacle_state_num: 7
+
+cbf:
+  enabled: false
+  type: 0
+  dcbf_alpha: 0.1
+  dcbf_weight: 1000000.0
+  slack_weight: 100.0
+  check_dist: 6.0
+  max_slack_vari: 1.0
+  atau: 0.2
+
+obstacles:
+  num_max: 0
+  static_enabled: false
+  virtual: []
+
+results:
+  root: results/mujoco_cube_omni
+  run_name: mujoco_external_path_tracker
+  timestamp_suffix: true
+  overwrite: false
+  enable_plots: false
+  enable_animation: false
+
+execution:
+  filter_enabled: false
+  filter_alpha: 0.0
+
+terrain:
+  enabled: false
+
+oracle_residual:
+  enabled: false
+
+external_path:
+  enabled: true
+  path_topic: /smooth_path
+  frame_id: map
+  stale_timeout: 1.0
+  stop_on_stale: true
+  lookahead: 2.0
+  max_points: 48
+  yaw_mode: line_of_sight
+  smoothing_iterations: 1
+  smoothing_alpha: 0.20
+  temporal_alpha: 0.0
+  temporal_endpoint_tolerance: 1.0
+
+global_path:
+  enabled: false
+
+local_goal:
+  enabled: false
+
+final_controller:
+  enabled: false

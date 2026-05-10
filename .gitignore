@@ -1,3 +1,21 @@
 /build
 /install
 /log
+/results
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+
+# Model weights / checkpoints
+*.pth
+*.pt
+*.ckpt
+*.onnx
+*.h5
+*.pkl
+*.bin
+*.weights
+*.safetensors

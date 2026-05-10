@@ -104,9 +104,9 @@ typedef struct kdres kdres_t;
 // Environment
 extern const bool urbanMapping = true;
 
-// VLP-16
-extern const int N_SCAN = 32;   //线数
-extern const int Horizon_SCAN = 1800;   //线上点数
+// Organized scan dimensions shared by terrain_pub_node launch defaults.
+extern const int N_SCAN = 16;   //线数
+extern const int Horizon_SCAN = 900;   //线上点数
 
 // Map Params
 extern const float mapResolution = 0.1; // map resolution

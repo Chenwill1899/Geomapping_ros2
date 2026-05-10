@@ -11,11 +11,23 @@ import torch
 from os.path import join
 from nav_msgs.msg import OccupancyGrid
 from elevation_msgs.msg import OccupancyElevation
+from .env_dilated import OnlyEnvDilated
 
 
 class MEDIRL_env(Node):
     def __init__(self):
         super().__init__('MEDIRL')
+
+        self.declare_parameter('device', 'cuda')
+        self.declare_parameter('debug_timing', False)
+        requested_device = self.get_parameter('device').value
+        self.debug_timing = bool(self.get_parameter('debug_timing').value)
+        if requested_device == 'cuda' and not torch.cuda.is_available():
+            self.get_logger().warn("CUDA requested for MEDIRL but unavailable; falling back to CPU")
+            requested_device = 'cpu'
+        self.device = torch.device(requested_device)
+        if self.device.type == 'cpu':
+            torch.set_num_threads(4)
         
         self.grid_size = 180
         self.total_cells = self.grid_size * self.grid_size  # 计算总单元格数
@@ -26,7 +38,8 @@ class MEDIRL_env(Node):
         self.net.load_state_dict(torch.load(join(
             '/home/mexxiie/prj/Geo_Semantic_fusion_nav_ws', 
             'step16-loss0.pth'
-        ))['net_state'])
+        ), map_location=self.device)['net_state'])
+        self.net.to(self.device)
         self.net.eval()
         
         self.have_sem = True
@@ -98,10 +111,15 @@ class MEDIRL_env(Node):
                 feat[i] = 10 * feat[i]
             
             # 模型推理
-            with torch.no_grad():
+            if self.debug_timing and self.device.type == 'cuda':
+                torch.cuda.synchronize()
+            with torch.inference_mode():
                 # 转换为float32张量（与消息类型匹配）
-                feat_tensor = torch.from_numpy(np.expand_dims(feat, axis=0)).type(torch.float32)
+                feat_tensor = torch.from_numpy(np.expand_dims(feat, axis=0)).to(
+                    device=self.device, dtype=torch.float32)
                 r_tensor = self.net(feat_tensor)
+            if self.debug_timing and self.device.type == 'cuda':
+                torch.cuda.synchronize()
             
             # 转换为numpy float32数组（关键步骤）
             r = -r_tensor[0].cpu().numpy().squeeze().astype(np.float32)
@@ -152,4 +170,3 @@ def main(args=None):
 
 if __name__ == "__main__":
     main()
-    
