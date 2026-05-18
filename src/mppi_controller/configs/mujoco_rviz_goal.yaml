@@ -29,13 +29,17 @@ external_path:
   frame_id: map
   stale_timeout: 3.0
   stop_on_stale: false
-  lookahead: 2.0
+  lookahead: 3.0
   max_points: 64
   yaw_mode: line_of_sight
   smoothing_iterations: 1
   smoothing_alpha: 0.20
   temporal_alpha: 0.30
   temporal_endpoint_tolerance: 1.0
+  min_remaining_length: 1.5
+  min_goal_distance: 1.0
+  final_goal_bypass_distance: 2.0
+  min_forward_projection: 0.0
 
 goal_topic:
   enabled: true
@@ -66,7 +70,7 @@ local_costmap:
   topic: /msg_local_reward
   layer: reward_cost
   stale_timeout: 1.0
-  cost_weight: 12.0
+  cost_weight: 4.0
   cost_power: 2.0
   unknown_cost: 100.0
   max_cost: 100.0
@@ -81,9 +85,9 @@ local_costmap:
     occupied_threshold: 50
     clear_value: 0.0
   footprint:
-    enabled: true
+    enabled: false
     radius: 0.55
-    safety_margin: 0.30
+    safety_margin: 0.0
     sample_count: 32
 
 motion_policy:
@@ -135,7 +139,7 @@ robot:
   max_awz: 1.2
   velocity_lag_beta: 0.30
   radius: 0.55
-  safety_dist: 0.30
+  safety_dist: 0.0
 
 mppi:
   weights: [2.4, 2.4, 0.35, 0.0, 0.0, 0.0]
@@ -154,12 +158,12 @@ mppi:
   update_smoothing_alpha: [0.30, 0.78, 0.78]
   goal_change_reset_distance: 0.75
   goal_change_reset_yaw: 1.0
-  goal_progress_weight: 32.0
-  heading_to_goal_weight: 0.12
+  goal_progress_weight: 42.0
+  heading_to_goal_weight: 0.20
   heading_to_goal_min_distance: 0.6
-  path_tracking_weight: 10.0
-  path_tracking_tolerance: 0.20
-  path_progress_weight: 2.0
+  path_tracking_weight: 5.0
+  path_tracking_tolerance: 0.35
+  path_progress_weight: 1.0
 
 default_controller: nominal_numpy
 controllers:

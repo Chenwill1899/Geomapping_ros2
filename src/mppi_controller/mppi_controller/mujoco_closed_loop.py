@@ -585,6 +585,10 @@ class ExternalPathConfig:
     smoothing_alpha: float = 0.20
     temporal_alpha: float = 0.0
     temporal_endpoint_tolerance: float = 1.0
+    min_remaining_length: float = 0.0
+    min_goal_distance: float = 0.0
+    final_goal_bypass_distance: float = 0.0
+    min_forward_projection: float = -1.0
 
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> "ExternalPathConfig":
@@ -603,6 +607,10 @@ class ExternalPathConfig:
             smoothing_alpha=float(np.clip(cfg.get("smoothing_alpha", 0.20), 0.0, 0.9)),
             temporal_alpha=float(np.clip(cfg.get("temporal_alpha", 0.0), 0.0, 0.95)),
             temporal_endpoint_tolerance=max(float(cfg.get("temporal_endpoint_tolerance", 1.0)), 0.0),
+            min_remaining_length=max(float(cfg.get("min_remaining_length", 0.0)), 0.0),
+            min_goal_distance=max(float(cfg.get("min_goal_distance", 0.0)), 0.0),
+            final_goal_bypass_distance=max(float(cfg.get("final_goal_bypass_distance", 0.0)), 0.0),
+            min_forward_projection=float(cfg.get("min_forward_projection", -1.0)),
         )
 
 
@@ -681,6 +689,9 @@ def select_external_path_goal(
     cfg: ExternalPathConfig,
 ) -> tuple[np.ndarray, np.ndarray]:
     waypoints = np.asarray(path, dtype=np.float32).reshape(-1, 2)
+    state_xy = np.asarray(state, dtype=np.float32).reshape(6)[:2]
+    global_goal_arr = np.asarray(global_goal, dtype=np.float32).reshape(6).copy()
+    distance_to_global_goal = float(np.linalg.norm(global_goal_arr[:2] - state_xy))
     goal = select_path_lookahead_goal(
         state,
         global_goal,
@@ -688,6 +699,21 @@ def select_external_path_goal(
         cfg.lookahead,
         yaw_mode=cfg.yaw_mode,
     )
+    if distance_to_global_goal > float(cfg.final_goal_bypass_distance):
+        to_global = global_goal_arr[:2] - state_xy
+        global_norm = float(np.linalg.norm(to_global))
+        if global_norm > 1e-6:
+            forward_projection = float(np.dot(goal[:2] - state_xy, to_global / global_norm))
+            if forward_projection < float(cfg.min_forward_projection):
+                return global_goal_arr, np.empty((0, 2), dtype=np.float32)
+        start_idx, projected, _distance = project_point_to_path(state_xy, waypoints)
+        remaining_length = _path_remaining_length_from_projection(waypoints, start_idx, projected)
+        goal_distance = float(np.linalg.norm(goal[:2] - state_xy))
+        if (
+            (cfg.min_remaining_length > 0.0 and remaining_length < cfg.min_remaining_length)
+            or (cfg.min_goal_distance > 0.0 and goal_distance < cfg.min_goal_distance)
+        ):
+            return global_goal_arr, np.empty((0, 2), dtype=np.float32)
     return goal, _limit_path_points(waypoints, max_points=cfg.max_points)
 
 
@@ -1265,6 +1291,18 @@ def project_point_to_path(point: np.ndarray, path: np.ndarray) -> tuple[int, np.
             best_projection = projection.astype(np.float32, copy=False)
             best_distance = distance
     return best_idx, best_projection, best_distance
+
+
+def _path_remaining_length_from_projection(path: np.ndarray, start_idx: int, projected: np.ndarray) -> float:
+    path = np.asarray(path, dtype=np.float32).reshape(-1, 2)
+    if len(path) < 2:
+        return 0.0
+    idx = int(np.clip(start_idx, 0, len(path) - 2))
+    projected = np.asarray(projected, dtype=np.float32).reshape(2)
+    remaining = float(np.linalg.norm(path[idx + 1] - projected))
+    if idx + 1 < len(path) - 1:
+        remaining += float(np.sum(np.linalg.norm(np.diff(path[idx + 1 :], axis=0), axis=1)))
+    return remaining
 
 
 def _nearest_free_cell(occupied: np.ndarray, cell: tuple[int, int]) -> tuple[int, int] | None:

@@ -14,14 +14,78 @@ from elevation_msgs.msg import OccupancyElevation
 from .env_dilated import OnlyEnvDilated
 
 
+def filter_ground_artifact_reward(
+    reward,
+    step,
+    roughness,
+    slope,
+    occupancy,
+    *,
+    enabled=True,
+    min_cost=20.0,
+    max_step_abs=0.08,
+    max_roughness=0.08,
+    max_slope=0.08,
+    occupied_threshold=50,
+    clear_value=0.0,
+):
+    reward_arr = np.asarray(reward, dtype=np.float32).copy()
+    if not enabled:
+        return reward_arr, 0
+
+    step_arr = np.asarray(step, dtype=np.float32)
+    roughness_arr = np.asarray(roughness, dtype=np.float32)
+    slope_arr = np.asarray(slope, dtype=np.float32)
+    occupancy_arr = np.asarray(occupancy, dtype=np.int16)
+    if (
+        reward_arr.shape != step_arr.shape
+        or reward_arr.shape != roughness_arr.shape
+        or reward_arr.shape != slope_arr.shape
+        or reward_arr.shape != occupancy_arr.shape
+    ):
+        return reward_arr, 0
+
+    flat_ground_artifact = (
+        (reward_arr >= float(min_cost))
+        & np.isfinite(step_arr)
+        & np.isfinite(roughness_arr)
+        & np.isfinite(slope_arr)
+        & (occupancy_arr >= 0)
+        & (occupancy_arr < int(occupied_threshold))
+        & (np.abs(step_arr) <= float(max_step_abs))
+        & (roughness_arr <= float(max_roughness))
+        & (slope_arr <= float(max_slope))
+    )
+    if not np.any(flat_ground_artifact):
+        return reward_arr, 0
+    reward_arr[flat_ground_artifact] = np.float32(clear_value)
+    return reward_arr, int(np.count_nonzero(flat_ground_artifact))
+
+
 class MEDIRL_env(Node):
     def __init__(self):
         super().__init__('MEDIRL')
 
         self.declare_parameter('device', 'cuda')
         self.declare_parameter('debug_timing', False)
+        self.declare_parameter('ground_artifact_filter.enabled', True)
+        self.declare_parameter('ground_artifact_filter.min_cost', 20.0)
+        self.declare_parameter('ground_artifact_filter.max_step_abs', 0.08)
+        self.declare_parameter('ground_artifact_filter.max_roughness', 0.08)
+        self.declare_parameter('ground_artifact_filter.max_slope', 0.08)
+        self.declare_parameter('ground_artifact_filter.occupied_threshold', 50)
+        self.declare_parameter('ground_artifact_filter.clear_value', 0.0)
         requested_device = self.get_parameter('device').value
         self.debug_timing = bool(self.get_parameter('debug_timing').value)
+        self.ground_artifact_filter = {
+            'enabled': bool(self.get_parameter('ground_artifact_filter.enabled').value),
+            'min_cost': float(self.get_parameter('ground_artifact_filter.min_cost').value),
+            'max_step_abs': float(self.get_parameter('ground_artifact_filter.max_step_abs').value),
+            'max_roughness': float(self.get_parameter('ground_artifact_filter.max_roughness').value),
+            'max_slope': float(self.get_parameter('ground_artifact_filter.max_slope').value),
+            'occupied_threshold': int(self.get_parameter('ground_artifact_filter.occupied_threshold').value),
+            'clear_value': float(self.get_parameter('ground_artifact_filter.clear_value').value),
+        }
         if requested_device == 'cuda' and not torch.cuda.is_available():
             self.get_logger().warn("CUDA requested for MEDIRL but unavailable; falling back to CPU")
             requested_device = 'cpu'
@@ -97,15 +161,20 @@ class MEDIRL_env(Node):
             self.feat[0] = np.array(gem_msg.cost_map, dtype=np.float32).reshape(self.grid_size, self.grid_size)
             self.feat[1] = np.array(gem_msg.height, dtype=np.float32).reshape(self.grid_size, self.grid_size)
             self.feat[2] = np.array(gem_msg.roughness, dtype=np.float32).reshape(self.grid_size, self.grid_size)
+            occupancy = np.array(gem_msg.occupancy.data, dtype=np.int16).reshape(self.grid_size, self.grid_size)
             
             if self.have_sem and self.have_gem:
-                self.feat_input(self.feat)
+                self.feat_input(self.feat, occupancy)
                 
         except Exception as e:
             self.get_logger().error(f"gem_callback failed: {str(e)}")
 
-    def feat_input(self, feat):
+    def feat_input(self, feat, occupancy):
         try:
+            slope_feature = feat[0].copy()
+            step_feature = feat[1].copy()
+            roughness_feature = feat[2].copy()
+
             # 特征预处理
             for i in range(3):
                 feat[i] = 10 * feat[i]
@@ -133,6 +202,16 @@ class MEDIRL_env(Node):
             # 应用归一化并再次确保类型
             r = np.clip(r, 0, 8).astype(np.float32)
             r = (100 * (r / 8)).astype(np.float32)  # 简化计算，确保类型
+            r, cleared_cells = filter_ground_artifact_reward(
+                r,
+                step_feature,
+                roughness_feature,
+                slope_feature,
+                occupancy,
+                **self.ground_artifact_filter,
+            )
+            if cleared_cells and self.debug_timing:
+                self.get_logger().info(f"Filtered {cleared_cells} flat-ground reward artifacts")
             
             # 转换为Python原生float列表（严格匹配ROS要求）
             reward_cost_list = r.flatten().tolist()

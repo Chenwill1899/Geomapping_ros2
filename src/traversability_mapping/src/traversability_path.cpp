@@ -37,7 +37,8 @@ public:
         radius_ = this->declare_parameter<double>("local_plan.radius", 0.3);
         visitflag_ = this->declare_parameter<bool>("local_plan.visitflag", false);
         cost_max_ = this->declare_parameter<double>("planning.cost_max", 50.0);
-        costmap_inflation_radius_ = this->declare_parameter<double>("local_plan.inflation_radius", costmapInflationRadius);
+        robot_radius_ = this->declare_parameter<double>("local_plan.robot_radius", 0.55);
+        costmap_inflation_radius_ = this->declare_parameter<double>("local_plan.inflation_radius", 0.0);
         omni_mode_ = this->declare_parameter<bool>("local_plan.omni_mode", true);
         omni_path_length_ = this->declare_parameter<double>("local_plan.omni_path_length", 3.0);
         omni_path_spacing_ = this->declare_parameter<double>("local_plan.omni_path_spacing", 0.25);
@@ -107,6 +108,7 @@ private:
     float map_max_[3] = {0.0f, 0.0f, 0.0f};
     bool planning_flag_;
     double radius_;
+    double robot_radius_;
     double cost_max_;
     double costmap_inflation_radius_;
     bool omni_mode_;
@@ -473,16 +475,7 @@ private:
         }
 
         if (trajectory_points_.size() < 2) {
-            const int fallback_steps = std::max(1, std::min(steps, static_cast<int>(std::ceil(1.0 / spacing))));
-            for (int i = 1; i <= fallback_steps; ++i) {
-                const double s = std::min(path_length, i * spacing);
-                PointType p;
-                p.x = static_cast<float>(robot_point_.x + ux * s);
-                p.y = static_cast<float>(robot_point_.y + uy * s);
-                p.z = static_cast<float>(robot_point_.z);
-                p.intensity = static_cast<float>(s);
-                trajectory_points_.push_back(p);
-            }
+            trajectory_points_.clear();
         }
     }
 
@@ -610,54 +603,78 @@ private:
     }
 
     bool isInCollision(state_t *state) const {
-        if (state->x[0] <= map_min_[0] || state->x[0] >= map_max_[0] ||
-            state->x[1] <= map_min_[1] || state->x[1] >= map_max_[1]) {
-            return false;
-        }
-        const int rounded_x = static_cast<int>((state->x[0] - map_min_[0]) / mapResolution);
-        const int rounded_y = static_cast<int>((state->x[1] - map_min_[1]) / mapResolution);
-        if (!inMap(rounded_x, rounded_y)) {
-            return false;
-        }
-        const int index = rounded_x + rounded_y * static_cast<int>(elevation_map_.occupancy.info.width);
-        return elevation_map_.reward_cost[index] > cost_max_ - 0.1 ||
-               (elevation_map_.occupancy.data[index] < 0 && visitflag_);
+        return isFootprintInCollision(state->x[0], state->x[1]);
     }
 
     bool isPointInCollision(const PointType &point) const {
-        if (point.x <= map_min_[0] || point.x >= map_max_[0] ||
-            point.y <= map_min_[1] || point.y >= map_max_[1]) {
+        return isFootprintInCollision(point.x, point.y);
+    }
+
+    bool isFootprintInCollision(double x, double y) const {
+        if (x <= map_min_[0] || x >= map_max_[0] ||
+            y <= map_min_[1] || y >= map_max_[1]) {
             return false;
         }
-        const int rounded_x = static_cast<int>((point.x - map_min_[0]) / elevation_map_.occupancy.info.resolution);
-        const int rounded_y = static_cast<int>((point.y - map_min_[1]) / elevation_map_.occupancy.info.resolution);
-        if (!inMap(rounded_x, rounded_y)) {
+        const double resolution = elevation_map_.occupancy.info.resolution;
+        if (resolution <= 0.0) {
             return false;
         }
-        const int index = rounded_x + rounded_y * static_cast<int>(elevation_map_.occupancy.info.width);
-        return elevation_map_.reward_cost[index] > cost_max_ - 0.1 ||
-               (elevation_map_.occupancy.data[index] < 0 && visitflag_);
+        const int center_x = static_cast<int>((x - map_min_[0]) / resolution);
+        const int center_y = static_cast<int>((y - map_min_[1]) / resolution);
+        const int radius_cells = std::max(0, static_cast<int>(std::ceil(robot_radius_ / resolution)));
+        for (int ix = center_x - radius_cells; ix <= center_x + radius_cells; ++ix) {
+            for (int iy = center_y - radius_cells; iy <= center_y + radius_cells; ++iy) {
+                if (!inMap(ix, iy)) {
+                    continue;
+                }
+                const double cell_x = map_min_[0] + (static_cast<double>(ix) + 0.5) * resolution;
+                const double cell_y = map_min_[1] + (static_cast<double>(iy) + 0.5) * resolution;
+                if (std::hypot(cell_x - x, cell_y - y) > robot_radius_) {
+                    continue;
+                }
+                if (isCostCellOccupied(ix, iy)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     float getPathObsCost(state_t *state) const {
         const PointType &p = path_cloud_global_->points[state->stateId];
-        const int rounded_x = static_cast<int>((p.x - map_min_[0]) / mapResolution);
-        const int rounded_y = static_cast<int>((p.y - map_min_[1]) / mapResolution);
+        const double resolution = elevation_map_.occupancy.info.resolution;
+        if (resolution <= 0.0) {
+            return 0.0f;
+        }
+        const int rounded_x = static_cast<int>((p.x - map_min_[0]) / resolution);
+        const int rounded_y = static_cast<int>((p.y - map_min_[1]) / resolution);
         float path_obs_cost = 0.0f;
-        constexpr int bound = 2;
+        const int bound = std::max(0, static_cast<int>(std::ceil(robot_radius_ / resolution)));
         for (int x = rounded_x - bound; x <= rounded_x + bound; ++x) {
             for (int y = rounded_y - bound; y <= rounded_y + bound; ++y) {
                 if (!inMap(x, y)) {
                     continue;
                 }
-                const int index = x + y * static_cast<int>(elevation_map_.occupancy.info.width);
-                if (elevation_map_.reward_cost[index] > cost_max_ - 0.1 ||
-                    (elevation_map_.occupancy.data[index] < 0 && visitflag_)) {
+                const double cell_x = map_min_[0] + (static_cast<double>(x) + 0.5) * resolution;
+                const double cell_y = map_min_[1] + (static_cast<double>(y) + 0.5) * resolution;
+                if (std::hypot(cell_x - p.x, cell_y - p.y) > robot_radius_) {
+                    continue;
+                }
+                if (isCostCellOccupied(x, y)) {
                     path_obs_cost += 1.0f;
                 }
             }
         }
         return path_obs_cost;
+    }
+
+    bool isCostCellOccupied(int x, int y) const {
+        if (!inMap(x, y)) {
+            return false;
+        }
+        const int index = x + y * static_cast<int>(elevation_map_.occupancy.info.width);
+        return elevation_map_.reward_cost[index] > cost_max_ - 0.1 ||
+               (elevation_map_.occupancy.data[index] < 0 && visitflag_);
     }
 
     bool inMap(int x, int y) const {

@@ -130,7 +130,7 @@ def generate_launch_description():
             {"use_sim_time": use_sim_time},
             {"planning.time_roll": 0.8},
             {"planning.path_valid_check_distance": 6.0},
-            {"planning.inflate_r": 0.2},
+            {"planning.inflate_r": 0.0},
             {"mapping.local_publish_every_scan": True},
             {"mapping.visualization_hz": 2.0},
             {"mapping.publish_global_debug": False},

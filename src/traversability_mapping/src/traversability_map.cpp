@@ -801,13 +801,32 @@ public:
                 return false;
             }
 
+            // Fresh-start safeguard: before the periodic RRTstarHandler has had
+            // a chance to run the WithoutGoal/Roll expansion branch (e.g. when
+            // a goal arrives while TF is still coming up so the timer keeps
+            // early-returning), start_node_ is an indeterminate pointer and
+            // rrt_star() would dereference it inside kd_insert2(). Always
+            // reset the tree and (re-)initialize start_node_/goal_node_ here,
+            // mirroring the WithoutGoal/Roll branch so the tree state is
+            // consistent with the current robot pose for every global plan.
+            for (int i = 0; i < valid_tree_node_nums_; i++)
+            {
+                nodes_pool_[i]->parent = nullptr;
+                nodes_pool_[i]->children.clear();
+            }
+            kd_clear(kd_tree);
+            start_node_ = nodes_pool_[1];
+            start_node_->x = start_;
+            start_node_->cost_from_start = 0.0;
+            start_node_->dist_from_start = 0.0;
+
             // cout<<"inital valid_tree_nums:"<< valid_tree_node_nums_<<endl;
             curr_iter_ = 0;
             goal_node_ = nodes_pool_[0];
             goal_node_->x = goal_;
             goal_node_->cost_from_start = DBL_MAX; // important
             goal_node_->dist_from_start = DBL_MAX;
-            // valid_tree_node_nums_ = 2;              // put start and goal in tree
+            valid_tree_node_nums_ = 2;              // put start and goal in tree
             int max_iter = 30000;
             double max_time = search_time_;
             //初始椭圆的参数
@@ -983,8 +1002,13 @@ public:
         }
 
         if (!found){
-            RCLCPP_WARN(get_logger(), "No collision-free local subgoal found; waiting for a new RViz goal");
-            return start_;
+            // A transient local-subgoal miss should not cancel the whole run.
+            // Fall back to the original RViz goal so the frontend keeps
+            // publishing /tltrajectory and can retry once the local map or
+            // robot pose changes.
+            RCLCPP_WARN(get_logger(), "No collision-free local subgoal found; falling back to the RViz goal");
+            has_valid_local_goal_ = true;
+            return global_goal;
         }
         has_valid_local_goal_ = true;
         return best_goal;
@@ -1076,11 +1100,12 @@ public:
 
             Eigen::Vector2d goal_inital;
             goal_inital<< goalPoint.x, goalPoint.y;
-            goal_ = selectLocalPlanningGoal(goal_inital);
-            if(!has_valid_local_goal_ || isStateValid(goal_)){
+            goal_ = goal_inital;
+            has_valid_local_goal_ = !isStateValid(goal_);
+            if(!has_valid_local_goal_){
                 RCLCPP_WARN(
                     get_logger(),
-                    "RViz goal/local subgoal is in collision or out of bound; clearing planner state and waiting for next goal"
+                    "RViz goal is in collision or out of bound; clearing planner state and waiting for next goal"
                 );
                 clearActiveGoalPlanning();
                 haveRobotPoint = false;
@@ -1277,8 +1302,8 @@ public:
         nav_msgs::msg::Path splinePath;
         geometry_msgs::msg::PoseStamped tmpPose;
         tmpPose.header.frame_id = "map";
-        std::vector<Eigen::Vector3d> currentPath = filterSmoothPath(pathFromCurrent(path));
-        for (const auto &pt : currentPath)
+        std::vector<Eigen::Vector3d> fullPath = filterSmoothPath(path);
+        for (const auto &pt : fullPath)
         {
             tmpPose.pose.position.x = pt[0];
             tmpPose.pose.position.y = pt[1];
