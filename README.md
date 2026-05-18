@@ -14,6 +14,7 @@
 - **多传感器融合**：支持 Livox 激光雷达与 IMU 的紧耦合融合
 - **点云数据预处理**：专用的 Velodyne 激光雷达数据格式转换和同步处理
 - **实时可视化**：集成 RViz2 实时显示建图结果和可通行性分析
+- **MuJoCo Scout + MPPI 闭环导航**：支持 ausim2 Scout 仿真、前端可通行性路径和 MPPI 控制器联调
 
 ### 📊 系统架构
 
@@ -38,6 +39,26 @@
                                                 │   地形预测与可视化   │
                                                 └─────────────────────┘
 ```
+
+### 🤖 MPPI 导航链路
+
+当前仓库包含一套面向 ausim2 Scout 的闭环导航链路：
+
+```
+ausim2 Scout /scout1/odom + /scout1/lidar/points
+        ↓
+ausim_geomapping_adapter
+        ↓
+traversability_mapping /msg_local_reward
+        ↓
+前端路径：/move_base_simple/goal → /RRT_goal → /smooth_path → /tltrajectory
+        ↓
+mppi_controller/fdm_mppi
+        ↓
+/joy/cmd_vel
+```
+
+MPPI 使用 `src/mppi_controller/configs/mujoco_rviz_goal.yaml` 作为前端路径版本的默认配置；`mujoco_rviz_goal_no_frontend.yaml` 用于绕过前端路径的对照测试。
 
 ## 核心模块详解
 
@@ -141,8 +162,11 @@ git clone <your-repo-url> .
 cd ~/geomapping_ws
 rosdep install --from-paths src --ignore-src -r -y
 
-# 编译
-colcon build --packages-select terrain_pub_node traversability_mapping elevation_msgs
+# 编译建图与导航相关包
+colcon build --packages-select \
+  terrain_pub_node traversability_mapping elevation_msgs medirl \
+  mppi_controller ausim_geomapping_adapter \
+  --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
 
 # 环境配置
 source install/setup.bash
@@ -189,12 +213,68 @@ ros2 bag play your_data.bag
 ros2 launch traversability_mapping lio_bag.launch.py use_sim_time:=true
 ```
 
+### 🤖 ausim2 + MPPI 闭环导航
+
+1. **启动 ausim2 Scout 仿真**
+```bash
+cd /home/mexxiie/prj/ausim2
+./em_run.sh --headless
+```
+
+2. **启动 Geomapping 前端与 MPPI 控制器**
+```bash
+cd /home/mexxiie/prj/Geomapping_ros2
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
+# 推荐：前端可通行性路径 + MPPI
+ros2 launch ausim_geomapping_adapter ausim_scout_mppi_frontend.launch.py launch_rviz:=true
+```
+
+如需做控制器对照测试，可关闭前端路径：
+
+```bash
+ros2 launch ausim_geomapping_adapter ausim_scout_mppi_no_frontend.launch.py launch_rviz:=true
+```
+
+3. **发布导航目标**
+
+RViz 使用 `2D Goal Pose`，目标话题为 `/move_base_simple/goal`。也可以用命令行发布：
+
+```bash
+ros2 topic pub --once /move_base_simple/goal geometry_msgs/msg/PoseStamped "{
+  header: {frame_id: map},
+  pose: {
+    position: {x: 18.0, y: 5.0, z: 0.0},
+    orientation: {w: 1.0}
+  }
+}"
+```
+
+4. **一键记录回归测试**
+
+仓库提供了记录脚本，会启动 ausim2、Geomapping 前端、MPPI，并把轨迹、指标、日志和障碍物配置保存到 `results/mppi_tuning/`：
+
+```bash
+source /opt/ros/humble/setup.bash
+source /home/mexxiie/prj/Geomapping_ros2/install/setup.bash
+
+python3 tools/geomapping_nav_trial.py \
+  --x 18 --y 5 \
+  --scene-seed 17 \
+  --tag x18_y5_baseline
+```
+
+当前基准版本的复测目标为 `(18, 5)`、`scene-seed=17`；最近一次本地验证结果为 `reached_goal=true`、`arrival_time=24.1s`。
+
 ## 参数配置
 
 ### 主要参数文件
 
 - **FAST-LIO 配置**：`src/FAST_LIO/config/avia.yaml`
 - **可通行性参数**：`src/traversability_mapping/params/traversability.yaml`
+- **前端 + MPPI 配置**：`src/mppi_controller/configs/mujoco_rviz_goal.yaml`
+- **MPPI 对照配置**：`src/mppi_controller/configs/mujoco_rviz_goal_no_frontend.yaml`
 
 ### 关键参数说明
 
@@ -209,6 +289,13 @@ map_resolution: 0.1             # 地图分辨率 (米)
 # 点云预处理参数（terrain_pub_node）
 lidar_lines: 32                 # 激光雷达线数
 horizontal_resolution: 0.2      # 水平角度分辨率 (度)
+
+# MPPI 导航参数
+external_path.path_topic: /tltrajectory   # 前端局部轨迹输入
+goal_topic.topic: /move_base_simple/goal  # RViz/命令行目标
+local_costmap.topic: /msg_local_reward    # Geomapping 局部代价地图
+local_costmap.cost_weight: 4.0            # rollout 中的代价地图权重
+robot.safety_dist: 0.0                    # 额外安全距离，安全边界由代价地图膨胀承担
 ```
 
 ## 性能优化
@@ -248,7 +335,12 @@ Geomapping_ros2/
 │   │   │   └── terrain_pub_node.cpp # Velodyne 点云预处理
 │   │   ├── CMakeLists.txt
 │   │   └── package.xml
+│   ├── ausim_geomapping_adapter/    # ausim2 Scout 到 Geomapping/MPPI 的外部适配
+│   ├── mppi_controller/             # MuJoCo Scout MPPI 控制器
 │   └── MEDIRL/                      # 扩展功能模块
+├── tools/
+│   ├── geomapping_nav_trial.py      # ausim2 + Geomapping + MPPI 单次回归记录
+│   └── summarize_nav_trials.py      # 多次导航试验结果汇总
 └── README.md
 ```
 
@@ -341,6 +433,17 @@ Velodyne 原始数据 → terrain_pub_node → 结构化点云 → FAST-LIO → 
    # 检查激光雷达驱动和时间同步
    ros2 topic hz /velodyne_points
    ```
+
+4. **MPPI 不动或速度明显降到 0**
+   ```bash
+   # 检查里程计、目标、前端轨迹和控制输出
+   ros2 topic hz /scout1/odom
+   ros2 topic echo --once /move_base_simple/goal
+   ros2 topic hz /tltrajectory
+   ros2 topic hz /joy/cmd_vel
+   ```
+
+   若 `/tltrajectory` 过短或中断，优先检查前端路径和 `/msg_local_reward`；若目标已正常但在高代价区边缘明显减速，优先检查 `local_costmap.cost_weight` 和 `external_path` 回退参数。
 
 ## 许可证
 
