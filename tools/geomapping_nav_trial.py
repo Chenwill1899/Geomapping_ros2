@@ -26,7 +26,7 @@ WORKSPACE_ROOT = Path("/home/mexxiie/prj")
 GEOMAPPING_ROOT = WORKSPACE_ROOT / "Geomapping_ros2"
 AUSIM_ROOT = WORKSPACE_ROOT / "ausim2"
 DEFAULT_PROFILE = GEOMAPPING_ROOT / "src" / "mppi_controller" / "configs" / "mujoco_rviz_goal.yaml"
-DEFAULT_OBSTACLE_CONFIG = AUSIM_ROOT / "third_party" / "dynamic_obs_generator" / "obstacle_scout.yaml"
+DEFAULT_OBSTACLE_CONFIG = GEOMAPPING_ROOT / "src" / "mppi_controller" / "configs" / "obstacle_scout_sparse.yaml"
 RESULTS_ROOT = GEOMAPPING_ROOT / "results" / "mppi_tuning"
 CONTROLLER_EXECUTABLE = GEOMAPPING_ROOT / "install" / "mppi_controller" / "lib" / "mppi_controller" / "fdm_mppi"
 
@@ -168,11 +168,14 @@ def _env() -> dict[str, str]:
 
 
 def _source_and_exec(command: str) -> list[str]:
+    ausim_ros_setup = AUSIM_ROOT / "build" / "ros_ws" / "install" / "setup.bash"
+    ausim_source = f"source {ausim_ros_setup} && " if ausim_ros_setup.exists() else ""
     return [
         "bash",
         "-lc",
         (
             "source /opt/ros/humble/setup.bash && "
+            f"{ausim_source}"
             f"source {GEOMAPPING_ROOT / 'install' / 'setup.bash'} && "
             f"exec {command}"
         ),
@@ -543,7 +546,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--yaw", type=float, default=0.0, help="Goal yaw in rad.")
     parser.add_argument("--tag", default=None, help="Optional suffix for the result directory name.")
     parser.add_argument("--profile", default=str(DEFAULT_PROFILE), help="Closed-loop profile path.")
-    parser.add_argument("--controller", default="nominal_numpy", help="Controller name from the profile.")
+    parser.add_argument("--controller", default="nominal_cuda", help="Controller name from the profile.")
     parser.add_argument("--headless", action=argparse.BooleanOptionalAction, default=True, help="Run ausim2 headless.")
     parser.add_argument("--launch-rviz", action=argparse.BooleanOptionalAction, default=False, help="Launch RViz.")
     parser.add_argument("--goal-tolerance-m", type=float, default=0.3, help="Success tolerance for outer packaging.")
@@ -555,7 +558,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--goal-topic", default="/move_base_simple/goal", help="Goal topic.")
     parser.add_argument("--cmd-topic", default="/joy/cmd_vel", help="Command topic remapped into MPPI.")
     parser.add_argument("--scene-seed", type=int, default=None, help="Override dynamic obstacle random seed for this run.")
-    parser.add_argument("--obstacle-config", default=None, help="Optional dynamic obstacle config to override ausim2 registry config.")
+    parser.add_argument(
+        "--obstacle-config",
+        default=str(DEFAULT_OBSTACLE_CONFIG),
+        help="Dynamic obstacle config used to override the ausim2 registry config.",
+    )
     args = parser.parse_args(argv)
 
     profile_path = Path(args.profile).resolve()

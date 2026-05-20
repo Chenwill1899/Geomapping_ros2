@@ -48,7 +48,7 @@ def generate_launch_description():
     )
     mppi_controller_arg = DeclareLaunchArgument(
         "mppi_controller",
-        default_value="nominal_numpy",
+        default_value="nominal_cuda",
         description="Controller entry from the MPPI profile.",
     )
     mppi_cmd_vel_topic_arg = DeclareLaunchArgument(

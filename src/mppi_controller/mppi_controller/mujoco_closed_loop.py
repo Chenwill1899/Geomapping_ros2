@@ -92,6 +92,95 @@ def _world_xy_velocity_to_body(state: np.ndarray) -> np.ndarray:
     )
 
 
+def _body_xy_to_world(vx: float, vy: float, yaw: float) -> np.ndarray:
+    cos_yaw = math.cos(float(yaw))
+    sin_yaw = math.sin(float(yaw))
+    return np.asarray(
+        [
+            float(vx) * cos_yaw - float(vy) * sin_yaw,
+            float(vx) * sin_yaw + float(vy) * cos_yaw,
+        ],
+        dtype=np.float32,
+    )
+
+
+def _world_xy_to_body_vector(vector: np.ndarray, yaw: float) -> np.ndarray:
+    vector = np.asarray(vector, dtype=np.float32).reshape(2)
+    cos_yaw = math.cos(float(yaw))
+    sin_yaw = math.sin(float(yaw))
+    return np.asarray(
+        [
+            cos_yaw * float(vector[0]) + sin_yaw * float(vector[1]),
+            -sin_yaw * float(vector[0]) + cos_yaw * float(vector[1]),
+        ],
+        dtype=np.float32,
+    )
+
+
+def apply_reactive_obstacle_avoidance(
+    state: np.ndarray,
+    command: np.ndarray,
+    obstacles: np.ndarray,
+    config: dict[str, Any],
+) -> np.ndarray:
+    cfg = config.get("reactive_avoidance", {})
+    if not bool(cfg.get("enabled", False)):
+        return np.asarray(command, dtype=np.float32).reshape(3).copy()
+    drive_mode = str(config.get("mujoco", {}).get("drive_mode", "differential")).lower()
+    if drive_mode not in {"omni", "omni_freejoint", "holonomic"}:
+        return np.asarray(command, dtype=np.float32).reshape(3).copy()
+    state_arr = np.asarray(state, dtype=np.float32).reshape(6)
+    cmd = np.asarray(command, dtype=np.float32).reshape(3).copy()
+    obstacle_arr = np.asarray(obstacles, dtype=np.float32).reshape(-1, 7)
+    if obstacle_arr.size == 0:
+        return cmd
+
+    robot = config.get("robot", {})
+    robot_radius = float(robot.get("radius", 0.35))
+    include_safety_dist = bool(cfg.get("include_safety_dist", True))
+    safety_dist = float(robot.get("safety_dist", 0.0)) if include_safety_dist else 0.0
+    influence_dist = max(float(cfg.get("influence_dist", 0.8)), 1e-6)
+    brake_gain = max(float(cfg.get("brake_gain", 0.0)), 0.0)
+    lateral_gain = max(float(cfg.get("lateral_gain", 0.0)), 0.0)
+    max_lateral_adjust = max(float(cfg.get("max_lateral_adjust", 0.25)), 0.0)
+    min_speed_scale = float(np.clip(cfg.get("min_speed_scale", 0.1), 0.0, 1.0))
+
+    position = state_arr[:2]
+    yaw = float(state_arr[2])
+    world_velocity = _body_xy_to_world(float(cmd[0]), float(cmd[1]), yaw)
+    adjusted_world = world_velocity.copy()
+    lateral_adjust = np.zeros(2, dtype=np.float32)
+    speed_scale = 1.0
+
+    for obstacle in obstacle_arr:
+        delta = np.asarray(obstacle[:2], dtype=np.float32) - position
+        distance = float(np.linalg.norm(delta))
+        if distance <= 1e-6:
+            direction_to_obstacle = np.asarray([1.0, 0.0], dtype=np.float32)
+        else:
+            direction_to_obstacle = delta / distance
+        clearance = distance - float(obstacle[2]) - robot_radius - safety_dist
+        if clearance >= influence_dist:
+            continue
+        closeness = float(np.clip((influence_dist - clearance) / influence_dist, 0.0, 1.0))
+        toward_speed = float(np.dot(adjusted_world, direction_to_obstacle))
+        if toward_speed > 0.0 and brake_gain > 0.0:
+            adjusted_world -= direction_to_obstacle * (brake_gain * closeness * toward_speed)
+            speed_scale = min(speed_scale, max(min_speed_scale, 1.0 - brake_gain * closeness))
+        if lateral_gain > 0.0:
+            lateral_adjust -= direction_to_obstacle * (lateral_gain * closeness)
+
+    adjust_norm = float(np.linalg.norm(lateral_adjust))
+    if adjust_norm > max_lateral_adjust > 0.0:
+        lateral_adjust *= max_lateral_adjust / adjust_norm
+    adjusted_world = adjusted_world * speed_scale + lateral_adjust
+    adjusted_body = _world_xy_to_body_vector(adjusted_world, yaw)
+    cmd[0] = float(np.clip(adjusted_body[0], float(robot.get("min_vx", -robot.get("max_vx", 1.0))), float(robot.get("max_vx", 1.0))))
+    cmd[1] = float(np.clip(adjusted_body[1], -float(robot.get("max_vy", 1.0)), float(robot.get("max_vy", 1.0))))
+    cmd[2] = float(np.clip(cmd[2], -float(robot.get("max_wz", 1.0)), float(robot.get("max_wz", 1.0))))
+    return cmd.astype(np.float32, copy=False)
+
+
 def initial_odom_timeout_expired(start_time: float, now: float, startup_timeout: float) -> bool:
     timeout = float(startup_timeout)
     if timeout <= 0.0:
@@ -290,6 +379,30 @@ def filter_diff_drive_command(
     return filter_mujoco_command(target, previous, cfg, dt)
 
 
+def filter_control_sequence_for_rollout(
+    controls: np.ndarray,
+    previous: np.ndarray,
+    cfg: CommandFilterConfig,
+    dt: float,
+    *,
+    distance_to_goal: float | None = None,
+) -> np.ndarray:
+    filtered: list[np.ndarray] = []
+    last = np.asarray(previous, dtype=np.float32).reshape(3).copy()
+    for control in np.asarray(controls, dtype=np.float32).reshape(-1, 3):
+        last = filter_mujoco_command(
+            control,
+            last,
+            cfg,
+            dt,
+            distance_to_goal=distance_to_goal,
+        ).copy()
+        filtered.append(last.copy())
+    if not filtered:
+        return np.empty((0, 3), dtype=np.float32)
+    return np.asarray(filtered, dtype=np.float32).reshape(-1, 3)
+
+
 def predict_omni_rollout(initial_state: np.ndarray, controls: np.ndarray, dt: float, max_control: np.ndarray) -> np.ndarray:
     state = np.asarray(initial_state, dtype=np.float32).reshape(6).copy()
     controls = np.asarray(controls, dtype=np.float32).reshape(-1, 3)
@@ -445,6 +558,48 @@ def merge_static_and_map_obstacles(
     return np.vstack([static, np.asarray(keep, dtype=np.float32)]).astype(np.float32, copy=False)
 
 
+def bounding_box_array_to_obstacles(
+    message: Any,
+    *,
+    safety_padding: float = 0.0,
+    box_safety_padding: float = 0.0,
+    max_obstacles: int | None = None,
+) -> np.ndarray:
+    boxes = list(getattr(message, "boxes", []))
+    if max_obstacles is not None:
+        boxes = boxes[: max(int(max_obstacles), 0)]
+    if not boxes:
+        return np.empty((0, 7), dtype=np.float32)
+    obstacles = np.zeros((len(boxes), 7), dtype=np.float32)
+    padding = max(float(safety_padding), 0.0)
+    compact_box_padding = max(float(box_safety_padding), padding)
+    for index, box in enumerate(boxes):
+        center = getattr(box, "center", None)
+        position = getattr(center, "position", None)
+        size = getattr(box, "size", None)
+        x = float(getattr(position, "x", 0.0))
+        y = float(getattr(position, "y", 0.0))
+        sx = abs(float(getattr(size, "x", 0.0)))
+        sy = abs(float(getattr(size, "y", 0.0)))
+        is_compact_box = max(sx, sy) <= 0.35
+        radius = 0.5 * math.hypot(sx, sy) + (compact_box_padding if is_compact_box else padding)
+        obstacles[index, 0] = x
+        obstacles[index, 1] = y
+        obstacles[index, 2] = radius
+        obstacles[index, 3] = radius
+    return obstacles
+
+
+def tracking_obstacles_for_cost(
+    obstacles: np.ndarray,
+    *,
+    using_local_costmap: bool,
+    has_fresh_external_path: bool,
+) -> np.ndarray:
+    del using_local_costmap, has_fresh_external_path
+    return np.asarray(obstacles, dtype=np.float32).reshape(-1, 7)
+
+
 def ros_path_message_to_waypoints(path_msg: Any) -> np.ndarray:
     poses = list(getattr(path_msg, "poses", []))
     points = []
@@ -589,10 +744,15 @@ class ExternalPathConfig:
     min_goal_distance: float = 0.0
     final_goal_bypass_distance: float = 0.0
     min_forward_projection: float = -1.0
+    stagnation_recovery_enabled: bool = False
+    stagnation_patience_steps: int = 0
+    stagnation_min_progress: float = 0.1
+    stagnation_recovery_steps: int = 0
 
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> "ExternalPathConfig":
         cfg = config.get("external_path", {})
+        recovery_cfg = cfg.get("stagnation_recovery", {})
         return cls(
             enabled=bool(cfg.get("enabled", False)),
             path_topic=str(cfg.get("path_topic", "/smooth_path")),
@@ -611,7 +771,65 @@ class ExternalPathConfig:
             min_goal_distance=max(float(cfg.get("min_goal_distance", 0.0)), 0.0),
             final_goal_bypass_distance=max(float(cfg.get("final_goal_bypass_distance", 0.0)), 0.0),
             min_forward_projection=float(cfg.get("min_forward_projection", -1.0)),
+            stagnation_recovery_enabled=bool(recovery_cfg.get("enabled", False)),
+            stagnation_patience_steps=max(int(recovery_cfg.get("patience_steps", 0)), 0),
+            stagnation_min_progress=max(float(recovery_cfg.get("min_progress", 0.1)), 0.0),
+            stagnation_recovery_steps=max(int(recovery_cfg.get("recovery_steps", 0)), 0),
         )
+
+
+@dataclass
+class ExternalPathRecoveryState:
+    best_goal_distance: float = math.inf
+    stagnation_steps: int = 0
+    recovery_steps_left: int = 0
+
+    def reset(self) -> None:
+        self.best_goal_distance = math.inf
+        self.stagnation_steps = 0
+        self.recovery_steps_left = 0
+
+
+def update_external_path_recovery_state(
+    state: ExternalPathRecoveryState,
+    cfg: ExternalPathConfig,
+    *,
+    distance_to_goal: float,
+    has_fresh_external_path: bool,
+) -> tuple[bool, bool]:
+    if (
+        not cfg.stagnation_recovery_enabled
+        or cfg.stagnation_patience_steps <= 0
+        or cfg.stagnation_recovery_steps <= 0
+        or not has_fresh_external_path
+        or not math.isfinite(float(distance_to_goal))
+    ):
+        state.reset()
+        return False, False
+
+    distance = float(distance_to_goal)
+    if state.recovery_steps_left > 0:
+        state.recovery_steps_left -= 1
+        if distance < state.best_goal_distance:
+            state.best_goal_distance = distance
+            state.stagnation_steps = 0
+        return True, False
+
+    if not math.isfinite(state.best_goal_distance) or (
+        distance < state.best_goal_distance - float(cfg.stagnation_min_progress)
+    ):
+        state.best_goal_distance = distance
+        state.stagnation_steps = 0
+        return False, False
+
+    state.stagnation_steps += 1
+    if state.stagnation_steps >= int(cfg.stagnation_patience_steps):
+        state.best_goal_distance = distance
+        state.stagnation_steps = 0
+        state.recovery_steps_left = max(int(cfg.stagnation_recovery_steps) - 1, 0)
+        return True, True
+
+    return False, False
 
 
 @dataclass
@@ -1010,6 +1228,59 @@ class LocalCostmapAdapter:
         if values.size != cell_count:
             return None
         return values
+
+
+@dataclass(frozen=True)
+class DynamicObstacleConfig:
+    enabled: bool = False
+    required: bool = False
+    topic: str = "/dyn_obstacle"
+    stale_timeout: float = 0.75
+    safety_padding: float = 0.0
+    box_safety_padding: float = 0.0
+    max_obstacles: int = 64
+    dedupe_distance: float = 0.15
+
+    @classmethod
+    def from_config(cls, config: dict[str, Any]) -> "DynamicObstacleConfig":
+        cfg = config.get("dynamic_obstacles", {})
+        return cls(
+            enabled=bool(cfg.get("enabled", False)),
+            required=bool(cfg.get("required", False)),
+            topic=str(cfg.get("topic", "/dyn_obstacle")),
+            stale_timeout=max(float(cfg.get("stale_timeout", 0.75)), 0.0),
+            safety_padding=max(float(cfg.get("safety_padding", 0.0)), 0.0),
+            box_safety_padding=max(float(cfg.get("box_safety_padding", cfg.get("safety_padding", 0.0))), 0.0),
+            max_obstacles=max(int(cfg.get("max_obstacles", 64)), 0),
+            dedupe_distance=max(float(cfg.get("dedupe_distance", 0.15)), 0.0),
+        )
+
+
+@dataclass
+class DynamicObstacleAdapter:
+    cfg: DynamicObstacleConfig
+    last_obstacles: np.ndarray = field(default_factory=lambda: np.empty((0, 7), dtype=np.float32))
+    last_time: float = 0.0
+
+    def update(self, msg: Any, now: float | None = None) -> None:
+        self.last_obstacles = bounding_box_array_to_obstacles(
+            msg,
+            safety_padding=self.cfg.safety_padding,
+            box_safety_padding=self.cfg.box_safety_padding,
+            max_obstacles=self.cfg.max_obstacles,
+        )
+        self.last_time = time.monotonic() if now is None else float(now)
+
+    def has_fresh_obstacles(self, now: float | None = None) -> bool:
+        if not self.cfg.enabled or self.last_time <= 0.0:
+            return False
+        current = time.monotonic() if now is None else float(now)
+        return current - self.last_time <= self.cfg.stale_timeout
+
+    def obstacles(self, now: float | None = None) -> np.ndarray:
+        if not self.has_fresh_obstacles(now=now):
+            return np.empty((0, 7), dtype=np.float32)
+        return np.asarray(self.last_obstacles, dtype=np.float32).reshape(-1, 7)
 
 
 @dataclass(frozen=True)
@@ -1931,8 +2202,11 @@ class MujocoClosedLoopNode:
         self.controller = create_omni_controller(config, seed=int(metadata["seed"]))
         self.static_obstacles = np.asarray(config.get("obstacles", {}).get("virtual", []), dtype=np.float32).reshape(-1, 7)
         self.elevation_map = ElevationMapObstacleAdapter.from_config(config)
+        self.dynamic_obstacles = DynamicObstacleAdapter(DynamicObstacleConfig.from_config(config))
+        self.dynamic_obstacles_logged = False
         self.local_costmap = LocalCostmapAdapter(LocalCostmapConfig.from_config(config))
         self.external_path = ExternalPathAdapter(ExternalPathConfig.from_config(config))
+        self.external_path_recovery = ExternalPathRecoveryState()
         self.local_goal = LocalGoalConfig.from_config(config)
         self.global_path = GlobalPathConfig.from_config(config)
         self.command_filter = CommandFilterConfig.from_config(config)
@@ -1999,6 +2273,26 @@ class MujocoClosedLoopNode:
 
             topic = str(config.get("elevation_map", {}).get("topic", "/elevation_mapping_node/elevation_map"))
             self.elevation_subscription = self._node.create_subscription(GridMap, topic, self._on_grid_map, 10)
+        self.dynamic_obstacle_subscription = None
+        if self.dynamic_obstacles.cfg.enabled:
+            try:
+                from ausim_msg.msg import BoundingBox3DArray
+            except Exception as exc:
+                message = (
+                    "dynamic_obstacles.enabled=true requires ausim_msg/BoundingBox3DArray; "
+                    "source /home/mexxiie/prj/ausim2/build/ros_ws/install/setup.bash before running MPPI"
+                )
+                if self.dynamic_obstacles.cfg.required:
+                    raise RuntimeError(message) from exc
+                self._node.get_logger().warning(f"{message}; disabling explicit dynamic obstacle input")
+                self.dynamic_obstacles.cfg = DynamicObstacleConfig(enabled=False)
+            else:
+                self.dynamic_obstacle_subscription = self._node.create_subscription(
+                    BoundingBox3DArray,
+                    self.dynamic_obstacles.cfg.topic,
+                    self._on_dynamic_obstacles,
+                    10,
+                )
         self.local_costmap_subscription = None
         if self.local_costmap.cfg.enabled:
             try:
@@ -2071,6 +2365,16 @@ class MujocoClosedLoopNode:
     def _on_grid_map(self, message: Any) -> None:
         self.elevation_map.update(message)
 
+    def _on_dynamic_obstacles(self, message: Any) -> None:
+        self.dynamic_obstacles.update(message)
+        if not self.dynamic_obstacles_logged:
+            obstacles = self.dynamic_obstacles.obstacles()
+            if obstacles.size:
+                self._node.get_logger().info(
+                    f"Received dynamic obstacles on {self.dynamic_obstacles.cfg.topic}: count={len(obstacles)}"
+                )
+                self.dynamic_obstacles_logged = True
+
     def _on_local_costmap(self, message: Any) -> None:
         self.local_costmap.update(message)
 
@@ -2090,6 +2394,7 @@ class MujocoClosedLoopNode:
         self.path_waypoints = np.empty((0, 2), dtype=np.float32)
         self.path_plan_id = None
         self.external_path.clear()
+        self.external_path_recovery.reset()
         self._node.get_logger().info(
             f"Updated MPPI goal from {self.goal_topic}: "
             f"x={self.goal[0]:.2f} y={self.goal[1]:.2f} yaw={self.goal[2]:.2f}"
@@ -2163,10 +2468,17 @@ class MujocoClosedLoopNode:
             map_obstacles,
             dedupe_distance=self.elevation_map.static_dedupe_distance,
         )
-        tracking_obstacles = (
-            np.empty((0, 7), dtype=np.float32)
-            if using_local_costmap or self.external_path.has_fresh_path()
-            else obstacles
+        dynamic_obstacles = self.dynamic_obstacles.obstacles()
+        obstacles = merge_static_and_map_obstacles(
+            obstacles,
+            dynamic_obstacles,
+            dedupe_distance=self.dynamic_obstacles.cfg.dedupe_distance,
+        )
+        external_path_fresh = self.external_path.has_fresh_path()
+        tracking_obstacles = tracking_obstacles_for_cost(
+            obstacles,
+            using_local_costmap=using_local_costmap,
+            has_fresh_external_path=external_path_fresh,
         )
         start = time.time()
         planning_goal = self.goal if self.goal is not None else path_terminal_goal(self.external_path.path(), state)
@@ -2178,9 +2490,23 @@ class MujocoClosedLoopNode:
         final_u = None if self.goal is None or not use_final_controller else final_approach_control(state, self.goal, self.config)
         optimal_u = None
         sample_u = None
+        bypass_external_path = False
+        if self.goal is not None:
+            bypass_external_path, recovery_triggered = update_external_path_recovery_state(
+                self.external_path_recovery,
+                self.external_path.cfg,
+                distance_to_goal=float(np.linalg.norm(self.goal[:2] - state[:2])),
+                has_fresh_external_path=external_path_fresh,
+            )
+            if recovery_triggered:
+                self._node.get_logger().warn(
+                    "External path progress stagnated; temporarily using global-path/RViz-goal fallback"
+                )
         if final_u is None:
-            if self.local_costmap.cfg.enabled and not self.external_path.has_fresh_path():
-                planning_goal = self.goal if self.goal is not None else np.asarray(state, dtype=np.float32).reshape(6).copy()
+            if bypass_external_path:
+                planning_goal, active_path, active_path_plan_id = self._global_path_planning_goal(state, obstacles)
+            elif self.local_costmap.cfg.enabled and not external_path_fresh:
+                planning_goal, active_path, active_path_plan_id = self._global_path_planning_goal(state, obstacles)
             else:
                 planning_goal, active_path, active_path_plan_id = self._planning_goal(state, obstacles)
             raw_u, optimal_u, sample_u, _normalizer, min_cost = self.controller.compute_control(
@@ -2212,17 +2538,26 @@ class MujocoClosedLoopNode:
             raw_u = final_u
             min_cost = 0.0
         elapsed_ms = (time.time() - start) * 1000.0
+        raw_u = apply_reactive_obstacle_avoidance(state, raw_u, obstacles, self.config)
+        previous_command_for_preview = self.previous_command.copy()
+        distance_to_goal = None if self.goal is None else float(np.linalg.norm(self.goal[:2] - state[:2]))
         filtered_u = filter_mujoco_command(
             raw_u,
             self.previous_command,
             self.command_filter,
             self.command_dt,
-            distance_to_goal=None if self.goal is None else float(np.linalg.norm(self.goal[:2] - state[:2])),
+            distance_to_goal=distance_to_goal,
         )
         self.previous_command = filtered_u.copy()
         twist, command = mujoco_twist_command(filtered_u, drive_mode=self.drive_mode, twist_factory=self._twist_type)
         self.publisher.publish(twist)
-        self._publish_rviz_markers(state, sample_u, optimal_u)
+        self._publish_rviz_markers(
+            state,
+            sample_u,
+            optimal_u,
+            preview_previous_command=previous_command_for_preview,
+            distance_to_goal=distance_to_goal,
+        )
         terrain_features = self.terrain.feature(float(state[0]), float(state[1]))
         terrain_risk = self.terrain.risk_cost(float(state[0]), float(state[1]), features=terrain_features)
         self.recorder.record_step(
@@ -2246,6 +2581,9 @@ class MujocoClosedLoopNode:
         state: np.ndarray,
         sample_u: np.ndarray | None,
         optimal_u: np.ndarray | None,
+        *,
+        preview_previous_command: np.ndarray | None = None,
+        distance_to_goal: float | None = None,
     ) -> None:
         if not self.rviz_enabled:
             return
@@ -2293,7 +2631,14 @@ class MujocoClosedLoopNode:
                 )
                 marker_id += 1
         if optimal_u is not None:
-            rollout = predict_omni_rollout(state, optimal_u, self.command_dt, max_control)
+            preview_controls = filter_control_sequence_for_rollout(
+                optimal_u,
+                self.previous_command if preview_previous_command is None else preview_previous_command,
+                self.command_filter,
+                self.command_dt,
+                distance_to_goal=distance_to_goal,
+            )
+            rollout = predict_omni_rollout(state, preview_controls, self.command_dt, max_control)
             if self.selected_path_pub is not None:
                 self.selected_path_pub.publish(self._path_message(rollout, stamp=stamp))
             marker_array.markers.append(
@@ -2431,6 +2776,7 @@ class MujocoClosedLoopNode:
         self.path_waypoints = np.empty((0, 2), dtype=np.float32)
         self.path_plan_id = None
         self.external_path.clear()
+        self.external_path_recovery.reset()
         self.rviz_history_path = np.empty((0, 6), dtype=np.float32)
         if hasattr(self.controller, "nominal_u"):
             self.controller.nominal_u = np.zeros_like(self.controller.nominal_u)
@@ -2447,7 +2793,22 @@ class MujocoClosedLoopNode:
                 external_waypoints,
                 self.external_path.cfg,
             )
+            if active_path.size == 0 and self.goal is not None and self.global_path.enabled:
+                return self._global_path_planning_goal(state, obstacles)
             return planning_goal, active_path, None
+        if self.goal is None:
+            return (
+                np.asarray(state, dtype=np.float32).reshape(6).copy(),
+                np.empty((0, 2), dtype=np.float32),
+                None,
+            )
+        return self._global_path_planning_goal(state, obstacles)
+
+    def _global_path_planning_goal(
+        self,
+        state: np.ndarray,
+        obstacles: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray, int | None]:
         if self.goal is None:
             return (
                 np.asarray(state, dtype=np.float32).reshape(6).copy(),

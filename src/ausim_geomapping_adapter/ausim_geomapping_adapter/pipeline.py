@@ -87,7 +87,7 @@ def generate_ausim_scout_localmap_launch_description():
         ),
         DeclareLaunchArgument(
             "mppi_controller",
-            default_value="nominal_numpy",
+            default_value="nominal_cuda",
             description="Controller entry from the MPPI profile.",
         ),
         DeclareLaunchArgument(

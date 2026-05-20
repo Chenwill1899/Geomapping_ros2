@@ -39,7 +39,12 @@ external_path:
   min_remaining_length: 1.5
   min_goal_distance: 1.0
   final_goal_bypass_distance: 2.0
-  min_forward_projection: 0.0
+  min_forward_projection: 2.4
+  stagnation_recovery:
+    enabled: true
+    patience_steps: 45
+    min_progress: 0.15
+    recovery_steps: 140
 
 goal_topic:
   enabled: true
@@ -47,7 +52,19 @@ goal_topic:
   topic: /move_base_simple/goal
 
 global_path:
-  enabled: false
+  enabled: true
+  resolution: 0.20
+  padding: 2.0
+  lookahead: 3.2
+  obstacle_inflation: 0.15
+  replan_steps: 15
+  replan_distance: 0.8
+  simplify_stride: 3
+  smoothing_iterations: 1
+  smoothing_alpha: 0.15
+  smoothing_sample_resolution: 0.10
+  cost_max_points: 64
+  yaw_mode: line_of_sight
 
 local_goal:
   enabled: false
@@ -70,7 +87,7 @@ local_costmap:
   topic: /msg_local_reward
   layer: reward_cost
   stale_timeout: 1.0
-  cost_weight: 4.0
+  cost_weight: 8.0
   cost_power: 2.0
   unknown_cost: 100.0
   max_cost: 100.0
@@ -85,10 +102,20 @@ local_costmap:
     occupied_threshold: 50
     clear_value: 0.0
   footprint:
-    enabled: false
+    enabled: true
     radius: 0.55
-    safety_margin: 0.0
+    safety_margin: 0.15
     sample_count: 32
+
+dynamic_obstacles:
+  enabled: true
+  required: false
+  topic: /dyn_obstacle
+  stale_timeout: 0.75
+  safety_padding: 0.05
+  box_safety_padding: 0.06
+  max_obstacles: 64
+  dedupe_distance: 0.15
 
 motion_policy:
   allow_reverse: false
@@ -106,6 +133,15 @@ command_filter:
   lateral_scale: 1.0
   lateral_deadband: 0.03
   yaw_deadband: 0.03
+
+reactive_avoidance:
+  enabled: false
+  include_safety_dist: false
+  influence_dist: 0.08
+  brake_gain: 0.25
+  lateral_gain: 0.04
+  max_lateral_adjust: 0.05
+  min_speed_scale: 0.70
 
 scenario:
   world_mode: nominal
@@ -139,37 +175,38 @@ robot:
   max_awz: 1.2
   velocity_lag_beta: 0.30
   radius: 0.55
-  safety_dist: 0.0
+  safety_dist: 0.20
 
 mppi:
   weights: [2.4, 2.4, 0.35, 0.0, 0.0, 0.0]
-  std_normal: [0.42, 0.24, 0.30]
+  std_normal: [0.42, 0.18, 0.24]
   num_trajectories: 896
   draw_num_traj: 20
-  obstacle_weight: 0.0
-  obstacle_soft_weight: 0.0
-  obstacle_influence_dist: 0.0
+  obstacle_weight: 200.0
+  obstacle_collision_weight: 10000.0
+  obstacle_soft_weight: 16.0
+  obstacle_influence_dist: 1.00
   control_weight: 0.015
-  smooth_weight: 2.0
+  smooth_weight: 2.4
   accel_weight: 0.45
   lateral_weight: 0.35
-  yaw_rate_weight: 0.32
-  jerk_weight: 0.65
-  update_smoothing_alpha: [0.30, 0.78, 0.78]
+  yaw_rate_weight: 0.38
+  jerk_weight: 0.85
+  update_smoothing_alpha: [0.34, 0.84, 0.82]
   goal_change_reset_distance: 0.75
   goal_change_reset_yaw: 1.0
-  goal_progress_weight: 42.0
+  goal_progress_weight: 44.0
   heading_to_goal_weight: 0.20
   heading_to_goal_min_distance: 0.6
-  path_tracking_weight: 5.0
-  path_tracking_tolerance: 0.35
-  path_progress_weight: 1.0
+  path_tracking_weight: 3.0
+  path_tracking_tolerance: 0.45
+  path_progress_weight: 0.8
 
-default_controller: nominal_numpy
+default_controller: nominal_cuda
 controllers:
-  - name: nominal_numpy
+  - name: nominal_cuda
     method: nominal
-    backend: numpy
+    backend: cuda
 
 visualization:
   plots: false

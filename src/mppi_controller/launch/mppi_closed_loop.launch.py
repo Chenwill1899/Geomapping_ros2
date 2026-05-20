@@ -21,7 +21,7 @@ def generate_launch_description():
                     "--profile",
                     profile,
                     "--controller",
-                    "nominal_numpy",
+                    "nominal_cuda",
                 ],
             ),
         ]
