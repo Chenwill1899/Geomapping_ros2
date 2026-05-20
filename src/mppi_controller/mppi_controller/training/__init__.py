@@ -1,1 +1,1 @@
-"""Training utilities for residual FDM models."""
+"""Training utilities for sequence FDM models."""

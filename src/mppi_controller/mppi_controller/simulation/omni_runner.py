@@ -1,4 +1,4 @@
-"""Simulation runner for the NumPy B2 omnidirectional MPPI controller."""
+"""Simulation runner for the B2 omnidirectional MPPI controller."""
 
 from __future__ import annotations
 
@@ -12,12 +12,9 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from mppi_controller.controllers.mppi_omni_learned_numpy import LearnedFdmMppiOmniNumpy
-from mppi_controller.controllers.mppi_omni_learned_torch import LearnedFdmMppiOmniTorch
-from mppi_controller.controllers.mppi_omni_learned_torch import MppiOmniSequenceFdmTorch
 from mppi_controller.controllers.mppi_omni_numpy import MppiOmniNumpy
+from mppi_controller.controllers.mppi_omni_sequence_fdm_torch import MppiOmniSequenceFdmTorch
 from mppi_controller.controllers.mppi_omni_torch import MppiOmniTorch
-from mppi_controller.core.learned_residual_dynamics import LearnedResidualDynamics
 from mppi_controller.core.omni_b2 import OmniB2
 from mppi_controller.core.residual_world import ResidualWorld
 from mppi_controller.core.terrain import TerrainField
@@ -38,15 +35,15 @@ ControllerFactory = Callable[..., object]
 def create_omni_controller(config: dict, seed: int = 123) -> object:
     backend = str(config["mppi"].get("backend", "numpy")).lower()
     fdm_cfg = config.get("fdm", {})
-    fdm_mode = str(fdm_cfg.get("mode", "residual")).lower()
+    fdm_mode = str(fdm_cfg.get("mode", "sequence")).lower()
     if bool(fdm_cfg.get("enabled", False)):
         if backend == "numpy":
-            return LearnedFdmMppiOmniNumpy.from_config(config, seed=seed)
+            raise ValueError("sequence FDM requires torch or cuda backend; numpy learned FDM was removed")
         if backend in {"cuda", "torch"}:
             if fdm_mode in {"sequence", "sequence_fdm"}:
                 return MppiOmniSequenceFdmTorch.from_config(config, seed=seed)
-            return LearnedFdmMppiOmniTorch.from_config(config, seed=seed)
-        raise ValueError(f"Unsupported learned FDM MPPI backend: {backend}")
+            raise ValueError(f"Only sequence FDM is supported; got fdm.mode={fdm_mode!r}")
+        raise ValueError(f"Unsupported sequence FDM MPPI backend: {backend}")
     if backend == "torch":
         return MppiOmniTorch.from_config(config, seed=seed)
     if backend == "cuda":
@@ -349,7 +346,8 @@ class OmniMppiSimulationRunner:
             "fdm_checkpoint": fdm_cfg.get("checkpoint", "best_model.pt") if enabled else None,
             "fdm_normalization": fdm_cfg.get("normalization", "normalization.npz") if enabled else None,
             "fdm_device": fdm_cfg.get("device", "cpu") if enabled else None,
-            "fdm_residual_gain": float(fdm_cfg.get("residual_gain", 1.0)) if enabled else None,
+            "fdm_mode": fdm_cfg.get("mode", "sequence") if enabled else None,
+            "fdm_sequence_horizon": int(fdm_cfg.get("sequence_horizon", 0)) if enabled else None,
             "fdm_profile_enabled": bool(fdm_cfg.get("profile_enabled", False)) if enabled else None,
         }
         learned = getattr(self.controller, "learned_dynamics", None)

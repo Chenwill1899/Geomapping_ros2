@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from mppi_controller.core.sequence_fdm_v2 import SequenceFdmMlpV2
+from mppi_controller.core.sequence_fdm_v2 import COSTMAP_GRID_DIM, SequenceFdmMlpV2
 
 
 class SequenceFdmDynamics:
@@ -56,10 +56,10 @@ class SequenceFdmDynamics:
 
         horizon_steps = checkpoint["horizon_steps"]
         hidden_dims = checkpoint.get("hidden_dims", [256, 256, 256])
-        input_dim = checkpoint.get("input_dim", 6 + 3 * horizon_steps + 81)
+        input_dim = checkpoint.get("input_dim", 6 + 3 * horizon_steps + COSTMAP_GRID_DIM)
         target_dim = checkpoint.get("target_dim", horizon_steps * 7)
 
-        expected_input_dim = 6 + 3 * horizon_steps + 81
+        expected_input_dim = 6 + 3 * horizon_steps + COSTMAP_GRID_DIM
         expected_target_dim = horizon_steps * 7
         if input_dim != expected_input_dim:
             raise ValueError(
@@ -97,14 +97,14 @@ class SequenceFdmDynamics:
         self,
         state: torch.Tensor,
         controls: torch.Tensor,
-        terrain_grid: torch.Tensor,
+        costmap_grid: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Batch inference with torch tensors.
 
         Args:
             state: (B, 6) or (6,)
             controls: (B, H, 3) or (H, 3)
-            terrain_grid: (B, 81) or (81,)
+            costmap_grid: (B, 81) or (81,)
 
         Returns:
             states_pred: (B, H, 6) or (H, 6)
@@ -114,17 +114,17 @@ class SequenceFdmDynamics:
         if squeeze:
             state = state.unsqueeze(0)
             controls = controls.unsqueeze(0)
-            terrain_grid = terrain_grid.unsqueeze(0)
+            costmap_grid = costmap_grid.unsqueeze(0)
 
         state = state.to(self.device)
         controls = controls.to(self.device)
-        terrain_grid = terrain_grid.to(self.device)
+        costmap_grid = costmap_grid.to(self.device)
 
         state_norm = self._normalize_state(state)
         controls_norm = self._normalize_controls(controls)
 
         with torch.no_grad():
-            out = self.model(state_norm, controls_norm, terrain_grid)
+            out = self.model(state_norm, controls_norm, costmap_grid)
 
         states_pred_raw, risk_logits = out
         states_pred = self._denormalize_state_targets(states_pred_raw)
@@ -139,14 +139,14 @@ class SequenceFdmDynamics:
         self,
         state: np.ndarray,
         controls: np.ndarray,
-        terrain_grid: np.ndarray,
+        costmap_grid: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Single-sample inference with numpy arrays.
 
         Args:
             state: (6,)
             controls: (H, 3)
-            terrain_grid: (81,)
+            costmap_grid: (81,)
 
         Returns:
             states_pred: (H, 6)
@@ -154,23 +154,23 @@ class SequenceFdmDynamics:
         """
         state_t = torch.from_numpy(state).float()
         controls_t = torch.from_numpy(controls).float()
-        terrain_t = torch.from_numpy(terrain_grid).float()
+        costmap_t = torch.from_numpy(costmap_grid).float()
 
-        states_pred, risk_logits = self.predict_torch(state_t, controls_t, terrain_t)
+        states_pred, risk_logits = self.predict_torch(state_t, controls_t, costmap_t)
         return states_pred.cpu().numpy(), risk_logits.cpu().numpy()
 
     def predict_batch(
         self,
         states: np.ndarray,
         controls: np.ndarray,
-        terrains: np.ndarray,
+        costmaps: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Batch inference with numpy arrays.
 
         Args:
             states: (B, 6)
             controls: (B, H, 3)
-            terrains: (B, 81)
+            costmaps: (B, 81)
 
         Returns:
             states_pred: (B, H, 6)
@@ -178,7 +178,7 @@ class SequenceFdmDynamics:
         """
         states_t = torch.from_numpy(states).float()
         controls_t = torch.from_numpy(controls).float()
-        terrains_t = torch.from_numpy(terrains).float()
+        costmaps_t = torch.from_numpy(costmaps).float()
 
-        states_pred, risk_logits = self.predict_torch(states_t, controls_t, terrains_t)
+        states_pred, risk_logits = self.predict_torch(states_t, controls_t, costmaps_t)
         return states_pred.cpu().numpy(), risk_logits.cpu().numpy()

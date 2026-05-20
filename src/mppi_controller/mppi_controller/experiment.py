@@ -60,7 +60,7 @@ TOP_LEVEL_CONFIG_GROUPS = {
     "rviz",
     "scenario",
 }
-LEARNED_METHODS = {"learned", "learned_fdm", "fdm", "residual_fdm"}
+LEARNED_METHODS = {"learned", "learned_fdm", "fdm", "sequence", "sequence_fdm", "learned_sequence"}
 DEFAULT_MODEL_SEARCH_ROOT = Path("results/fdm_baselines")
 ARTIFACT_FILES = {
     "summary_json": "summary.json",
@@ -102,7 +102,6 @@ def build_experiment_config(
     checkpoint: str | Path | None = None,
     normalization: str | Path | None = None,
     device: str | None = None,
-    residual_gain: float | None = None,
     enable_plots: bool | None = None,
     enable_animation: bool | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -128,7 +127,6 @@ def build_experiment_config(
         checkpoint=checkpoint,
         normalization=normalization,
         device=device,
-        residual_gain=residual_gain,
     )
     _apply_output_and_visualization(
         config,
@@ -166,7 +164,6 @@ def run_experiment_profile(
     checkpoint: str | Path | None = None,
     normalization: str | Path | None = None,
     device: str | None = None,
-    residual_gain: float | None = None,
     enable_plots: bool | None = None,
     enable_animation: bool | None = None,
     runner_cls=OmniMppiSimulationRunner,
@@ -182,7 +179,6 @@ def run_experiment_profile(
         checkpoint=checkpoint,
         normalization=normalization,
         device=device,
-        residual_gain=residual_gain,
         enable_plots=enable_plots,
         enable_animation=enable_animation,
     )
@@ -323,7 +319,6 @@ def _apply_controller(
     checkpoint: str | Path | None,
     normalization: str | Path | None,
     device: str | None,
-    residual_gain: float | None,
 ) -> None:
     mppi = config.setdefault("mppi", {})
     if "mppi" in controller:
@@ -333,11 +328,14 @@ def _apply_controller(
         mppi["backend"] = str(selected_backend).lower()
 
     if method in LEARNED_METHODS:
+        if selected_backend is None and str(mppi.get("backend", "numpy")).lower() == "numpy":
+            mppi["backend"] = "torch"
         fdm = config.setdefault("fdm", {})
         fdm["enabled"] = True
         learned = controller.get("learned_fdm", controller.get("fdm", {}))
         if learned:
             _deep_update(fdm, _mapping(learned, "controller.learned_fdm"))
+        fdm.setdefault("mode", "sequence")
         if model_dir is not None:
             fdm["model_dir"] = str(model_dir)
         if checkpoint is not None:
@@ -346,8 +344,6 @@ def _apply_controller(
             fdm["normalization"] = str(normalization)
         if device is not None:
             fdm["device"] = str(device)
-        if residual_gain is not None:
-            fdm["residual_gain"] = float(residual_gain)
     else:
         config.setdefault("fdm", {})["enabled"] = False
 
@@ -438,7 +434,7 @@ def _missing_fdm_artifact_message(
         "Fix:",
         "  - pass an existing model directory with --model-dir, or",
         "  - choose the matching checkpoint/normalization names, or",
-        "  - train a residual FDM first:",
+        "  - train a sequence FDM first:",
         "    /usr/bin/python3 tools/fdm_mppi.py train --dataset <dataset_splits> --output results/fdm_baselines/<name>",
     ]
     candidates = _discover_model_candidates(model_dir.parent if model_dir.parent != Path("") else DEFAULT_MODEL_SEARCH_ROOT)

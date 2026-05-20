@@ -1,10 +1,13 @@
-"""Sequence FDM V2 model: predicts absolute trajectories + binary risk from terrain grid."""
+"""Sequence FDM V2 model: predicts trajectories + risk from a costmap grid."""
 
 from __future__ import annotations
 
 import torch
 from torch import nn
 
+
+COSTMAP_GRID_SIZE = 9
+COSTMAP_GRID_DIM = COSTMAP_GRID_SIZE * COSTMAP_GRID_SIZE
 
 FEATURE_NAMES_V2 = [
     "state_x", "state_y", "state_theta",
@@ -16,7 +19,7 @@ FEATURE_NAMES_V2 = [
 ] + [
     f"cmd_t{i}_wz" for i in range(1, 100)
 ] + [
-    f"terrain_grid_{i}" for i in range(81)
+    f"costmap_grid_{i}" for i in range(COSTMAP_GRID_DIM)
 ]
 
 TARGET_NAMES_V2 = [
@@ -40,7 +43,7 @@ def build_feature_names_v2(horizon_steps: int) -> list[str]:
     names = ["state_x", "state_y", "state_theta", "state_vx", "state_vy", "state_wz"]
     for step in range(horizon_steps):
         names.extend([f"future_cmd_t{step + 1}_vx", f"future_cmd_t{step + 1}_vy", f"future_cmd_t{step + 1}_wz"])
-    names.extend([f"terrain_grid_{i}" for i in range(81)])
+    names.extend([f"costmap_grid_{i}" for i in range(COSTMAP_GRID_DIM)])
     return names
 
 
@@ -55,14 +58,14 @@ def build_target_names_v2(horizon_steps: int) -> list[str]:
 
 
 class SequenceFdmMlpV2(nn.Module):
-    """MLP that maps (state, control sequence, terrain grid) -> (state sequence, risk logits)."""
+    """MLP that maps (state, control sequence, costmap grid) -> (state sequence, risk logits)."""
 
     def __init__(self, horizon_steps: int, hidden_dims: list[int] | None = None) -> None:
         super().__init__()
         if hidden_dims is None:
             hidden_dims = [256, 256, 256]
         self.horizon_steps = int(horizon_steps)
-        input_dim = 6 + 3 * self.horizon_steps + 81
+        input_dim = 6 + 3 * self.horizon_steps + COSTMAP_GRID_DIM
         output_dim = 6 * self.horizon_steps + self.horizon_steps
 
         layers: list[nn.Module] = []
@@ -78,20 +81,20 @@ class SequenceFdmMlpV2(nn.Module):
         self,
         state: torch.Tensor,
         controls: torch.Tensor,
-        terrain_grid: torch.Tensor,
+        costmap_grid: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Args:
             state: (B, 6)
             controls: (B, H, 3)
-            terrain_grid: (B, 81)
+            costmap_grid: (B, 81)
         Returns:
             states_pred: (B, H, 6)
             risk_logits: (B, H)
         """
         batch_size = state.shape[0]
         controls_flat = controls.view(batch_size, -1)
-        x = torch.cat([state, controls_flat, terrain_grid], dim=1)
+        x = torch.cat([state, controls_flat, costmap_grid], dim=1)
         out = self.net(x)
         states_pred = out[:, : 6 * self.horizon_steps].view(batch_size, self.horizon_steps, 6)
         risk_logits = out[:, 6 * self.horizon_steps :]

@@ -88,13 +88,12 @@ def run_benchmark(
     output_dir: str | Path,
     episodes: int,
     base_seed: int,
-    backend: str | None = "numpy",
+    backend: str | None = "torch",
     controllers: Sequence[str] = VALID_CONTROLLERS,
     fdm_model_dir: str | Path = "results/fdm_baselines/stage4_mlp_seed123_hardened",
     fdm_checkpoint: str | Path = "best_model.pt",
     fdm_normalization: str | Path = "normalization.npz",
     fdm_device: str | None = None,
-    fdm_residual_gain: float = 1.0,
     mppi_overrides: dict[str, float | str] | None = None,
     learned_mppi_overrides: dict[str, float] | None = None,
     command: str | None = None,
@@ -131,7 +130,6 @@ def run_benchmark(
                 fdm_checkpoint=fdm_checkpoint,
                 fdm_normalization=fdm_normalization,
                 fdm_device=fdm_device,
-                fdm_residual_gain=fdm_residual_gain,
                 mppi_overrides=mppi_overrides,
                 learned_mppi_overrides=learned_mppi_overrides,
             )
@@ -170,7 +168,6 @@ def run_benchmark(
             "fdm_checkpoint": str(fdm_checkpoint),
             "fdm_normalization": str(fdm_normalization),
             "fdm_device": str(fdm_device),
-            "fdm_residual_gain": float(fdm_residual_gain),
             "mppi_overrides": dict(mppi_overrides),
             "learned_mppi_overrides": dict(learned_mppi_overrides),
             "timestamp": dt.datetime.now(dt.timezone.utc).isoformat(),
@@ -200,7 +197,6 @@ def prepare_run_config(
     fdm_checkpoint: str | Path,
     fdm_normalization: str | Path,
     fdm_device: str,
-    fdm_residual_gain: float = 1.0,
     mppi_overrides: dict[str, float | str] | None = None,
     learned_mppi_overrides: dict[str, float] | None = None,
 ) -> dict:
@@ -232,7 +228,7 @@ def prepare_run_config(
             "checkpoint": str(fdm_checkpoint),
             "normalization": str(fdm_normalization),
             "device": str(fdm_device),
-            "residual_gain": float(fdm_residual_gain),
+            "mode": "sequence",
         }
     else:
         config.pop("fdm", None)
@@ -511,13 +507,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--output", default="results/stage5_benchmark/standard_seed123")
     parser.add_argument("--episodes", type=int, default=1)
     parser.add_argument("--base-seed", type=int, default=123)
-    parser.add_argument("--backend", choices=["numpy", "cuda", "torch"], default="numpy")
+    parser.add_argument("--backend", choices=["numpy", "cuda", "torch"], default="torch")
     parser.add_argument("--controllers", default="nominal,learned")
     parser.add_argument("--fdm-model-dir", default="results/fdm_baselines/stage4_mlp_seed123_hardened")
     parser.add_argument("--fdm-checkpoint", default="best_model.pt")
     parser.add_argument("--fdm-normalization", default="normalization.npz")
     parser.add_argument("--fdm-device", default=None)
-    parser.add_argument("--fdm-residual-gain", type=float, default=1.0)
     parser.add_argument(
         "--mppi-override",
         action="append",
@@ -546,7 +541,6 @@ def main(argv: list[str] | None = None) -> None:
         fdm_checkpoint=args.fdm_checkpoint,
         fdm_normalization=args.fdm_normalization,
         fdm_device=args.fdm_device or ("cuda" if args.backend == "cuda" else "cpu"),
-        fdm_residual_gain=args.fdm_residual_gain,
         mppi_overrides=parse_mppi_overrides(args.mppi_override),
         learned_mppi_overrides=parse_learned_mppi_overrides(args.learned_mppi_override),
         command=shell_join([sys.executable, *sys.argv]),

@@ -1,4 +1,4 @@
-"""Training utilities for Sequence FDM V2 with curriculum learning."""
+"""Training utilities for Sequence FDM V2 with costmap-grid input."""
 
 from __future__ import annotations
 
@@ -9,6 +9,8 @@ import numpy as np
 import torch
 from torch import nn
 from torch.utils.data import Dataset, DataLoader
+
+from mppi_controller.core.sequence_fdm_v2 import COSTMAP_GRID_DIM
 
 
 class SequenceFdmDataset(Dataset):
@@ -25,10 +27,20 @@ class SequenceFdmDataset(Dataset):
         w = self.windows[idx]
         state = torch.as_tensor(w["state"], dtype=torch.float32)
         controls = torch.as_tensor(w["controls"], dtype=torch.float32)
-        terrain_grid = torch.as_tensor(w["terrain_grid"], dtype=torch.float32)
+        costmap_grid = torch.as_tensor(_window_costmap_grid(w), dtype=torch.float32)
         target_states = torch.as_tensor(w["target_states"], dtype=torch.float32)
         target_risk = torch.as_tensor(w["target_risk"], dtype=torch.float32)
-        return state, controls, terrain_grid, target_states, target_risk
+        return state, controls, costmap_grid, target_states, target_risk
+
+
+def _window_costmap_grid(window: dict) -> np.ndarray:
+    if "costmap_grid" in window:
+        grid = np.asarray(window["costmap_grid"], dtype=np.float32)
+    else:
+        grid = np.asarray(window["terrain_grid"], dtype=np.float32)
+    if grid.reshape(-1).shape != (COSTMAP_GRID_DIM,):
+        raise ValueError(f"costmap_grid must be flat {COSTMAP_GRID_DIM}-D, got shape {grid.shape}")
+    return grid.reshape(COSTMAP_GRID_DIM)
 
 
 def compute_normalization(windows: list[dict], horizon_steps: int) -> dict[str, np.ndarray]:
@@ -135,7 +147,7 @@ def train_sequence_fdm_v2(
             return {
                 "state": w["state"],
                 "controls": w["controls"][:horizon],
-                "terrain_grid": w["terrain_grid"],
+                "costmap_grid": _window_costmap_grid(w),
                 "target_states": w["target_states"][:horizon],
                 "target_risk": w["target_risk"][:horizon],
             }
@@ -266,7 +278,7 @@ def train_sequence_fdm_v2(
                     "model_state_dict": model.state_dict(),
                     "horizon_steps": horizon,
                     "hidden_dims": hidden_dims,
-                    "input_dim": 6 + 3 * horizon + 81,
+                    "input_dim": 6 + 3 * horizon + COSTMAP_GRID_DIM,
                     "target_dim": 6 * horizon + horizon,
                     "phase": phase_idx,
                 }, ckpt_path)
@@ -277,7 +289,7 @@ def train_sequence_fdm_v2(
                         "model_state_dict": model.state_dict(),
                         "horizon_steps": horizon,
                         "hidden_dims": hidden_dims,
-                        "input_dim": 6 + 3 * horizon + 81,
+                        "input_dim": 6 + 3 * horizon + COSTMAP_GRID_DIM,
                         "target_dim": 6 * horizon + horizon,
                         "phase": phase_idx,
                     }, output_dir / "best_model.pt")

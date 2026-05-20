@@ -28,7 +28,6 @@ class PipelineCommands:
                 checkpoint=args.checkpoint,
                 normalization=args.normalization,
                 device=args.device,
-                residual_gain=args.residual_gain,
                 enable_plots=args.plots,
                 enable_animation=args.animation,
             )
@@ -70,7 +69,6 @@ class PipelineCommands:
             fdm_checkpoint=args.fdm_checkpoint,
             fdm_normalization=args.fdm_normalization,
             fdm_device=args.fdm_device,
-            fdm_residual_gain=args.fdm_residual_gain,
         )
         print_run_summary(summary)
         return 0
@@ -112,80 +110,28 @@ class PipelineCommands:
         return 0
 
     def train(self, args: argparse.Namespace) -> int:
-        from mppi_controller.training.residual_fdm import (
+        from mppi_controller.training.sequence_fdm import (
             shell_join,
-            train_residual_fdm,
             train_sequence_fdm,
         )
 
         argv = [sys.executable, "tools/fdm_mppi.py", *sys.argv[1:]]
-        if args.sequence:
-            metrics = train_sequence_fdm(
-                dataset_dir=args.dataset,
-                output_dir=args.output,
-                sequence_horizon=args.sequence_horizon,
-                include_history_controls=args.sequence_include_history,
-                history_steps=args.sequence_history_steps,
-                epochs=args.epochs,
-                batch_size=args.batch_size,
-                hidden_dim=args.hidden_dim,
-                learning_rate=args.learning_rate,
-                weight_decay=args.weight_decay,
-                seed=args.seed,
-                device=args.device,
-                tensorboard_log_dir=args.tensorboard_log_dir,
-                command=shell_join(argv),
-                argv=argv,
-            )
-        else:
-            metrics = train_residual_fdm(
-                dataset_dir=args.dataset,
-                output_dir=args.output,
-                epochs=args.epochs,
-                batch_size=args.batch_size,
-                hidden_dim=args.hidden_dim,
-                learning_rate=args.learning_rate,
-                weight_decay=args.weight_decay,
-                seed=args.seed,
-                device=args.device,
-                tensorboard_log_dir=args.tensorboard_log_dir,
-                command=shell_join(argv),
-                argv=argv,
-            )
-        _print_json(metrics)
-        return 0
-
-    def eval_dataset(self, args: argparse.Namespace) -> int:
-        from mppi_controller.evaluation.residual_fdm_dataset import evaluate_residual_fdm_dataset, shell_join
-
-        metrics = evaluate_residual_fdm_dataset(
+        metrics = train_sequence_fdm(
             dataset_dir=args.dataset,
-            model_dir=args.model_dir,
             output_dir=args.output,
-            checkpoint=args.checkpoint,
-            normalization=args.normalization,
-            device=args.device,
-            command=shell_join([sys.executable, "tools/fdm_mppi.py", *sys.argv[1:]]),
-        )
-        _print_json(metrics)
-        return 0
-
-    def eval_rollout(self, args: argparse.Namespace) -> int:
-        from mppi_controller.evaluation.residual_fdm_rollout import evaluate_residual_fdm_rollout, shell_join
-
-        metrics = evaluate_residual_fdm_rollout(
-            config_path=args.config,
-            model_dir=args.model_dir,
-            output_dir=args.output,
+            sequence_horizon=args.sequence_horizon,
+            include_history_controls=args.sequence_include_history,
+            history_steps=args.sequence_history_steps,
+            epochs=args.epochs,
+            batch_size=args.batch_size,
+            hidden_dim=args.hidden_dim,
+            learning_rate=args.learning_rate,
+            weight_decay=args.weight_decay,
             seed=args.seed,
-            backend=args.backend,
             device=args.device,
-            checkpoint=args.checkpoint,
-            normalization=args.normalization,
-            generate_gif=not args.no_gif,
-            gif_fps=args.gif_fps,
-            gif_max_frames=args.gif_max_frames,
-            command=shell_join([sys.executable, "tools/fdm_mppi.py", *sys.argv[1:]]),
+            tensorboard_log_dir=args.tensorboard_log_dir,
+            command=shell_join(argv),
+            argv=argv,
         )
         _print_json(metrics)
         return 0
@@ -211,7 +157,6 @@ class PipelineCommands:
             fdm_checkpoint=args.fdm_checkpoint,
             fdm_normalization=args.fdm_normalization,
             fdm_device=args.fdm_device,
-            fdm_residual_gain=args.fdm_residual_gain,
             mppi_overrides=parse_mppi_overrides(args.mppi_override),
             learned_mppi_overrides=parse_learned_mppi_overrides(args.learned_mppi_override),
             command=shell_join([sys.executable, "tools/fdm_mppi.py", *sys.argv[1:]]),
@@ -249,7 +194,6 @@ def build_parser() -> argparse.ArgumentParser:
     experiment.add_argument("--checkpoint", default=None)
     experiment.add_argument("--normalization", default=None)
     experiment.add_argument("--device", default=None)
-    experiment.add_argument("--residual-gain", type=float, default=None)
     experiment.add_argument("--plots", action=argparse.BooleanOptionalAction, default=None)
     experiment.add_argument("--animation", action=argparse.BooleanOptionalAction, default=None)
     experiment.set_defaults(handler="experiment")
@@ -273,7 +217,6 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--fdm-checkpoint", default=None)
     run.add_argument("--fdm-normalization", default=None)
     run.add_argument("--fdm-device", default=None)
-    run.add_argument("--fdm-residual-gain", type=float, default=None)
     run.set_defaults(handler="run")
 
     dataset = subparsers.add_parser("dataset", help="Collect, build, or validate oracle datasets")
@@ -302,7 +245,7 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--output", default=None)
     validate.set_defaults(handler="dataset_validate")
 
-    train = subparsers.add_parser("train", help="Train residual FDM")
+    train = subparsers.add_parser("train", help="Train sequence FDM")
     train.add_argument("--dataset", required=True)
     train.add_argument("--output", required=True)
     train.add_argument("--epochs", type=int, default=50)
@@ -313,7 +256,6 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--seed", type=int, default=123)
     train.add_argument("--device", default="cpu")
     train.add_argument("--tensorboard-log-dir", default=None)
-    train.add_argument("--sequence", action="store_true", help="Train sequence FDM instead of step residual FDM")
     train.add_argument(
         "--sequence-horizon",
         type=int,
@@ -334,45 +276,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     train.set_defaults(handler="train")
 
-    eval_parser = subparsers.add_parser("eval", help="Evaluate trained residual FDM")
-    eval_sub = eval_parser.add_subparsers(dest="eval_command", required=True)
-
-    eval_dataset = eval_sub.add_parser("dataset", help="Evaluate checkpoint on dataset splits")
-    eval_dataset.add_argument("--dataset", required=True)
-    eval_dataset.add_argument("--model-dir", required=True)
-    eval_dataset.add_argument("--output", required=True)
-    eval_dataset.add_argument("--checkpoint", default="best_model.pt")
-    eval_dataset.add_argument("--normalization", default="normalization.npz")
-    eval_dataset.add_argument("--device", default="cpu")
-    eval_dataset.set_defaults(handler="eval_dataset")
-
-    eval_rollout = eval_sub.add_parser("rollout", help="Evaluate open-loop rollout replay")
-    eval_rollout.add_argument("--config", required=True)
-    eval_rollout.add_argument("--model-dir", required=True)
-    eval_rollout.add_argument("--output", required=True)
-    eval_rollout.add_argument("--seed", type=int, default=123)
-    eval_rollout.add_argument("--backend", choices=["cuda", "numpy"], default=None)
-    eval_rollout.add_argument("--device", default="cpu")
-    eval_rollout.add_argument("--checkpoint", default="model.pt")
-    eval_rollout.add_argument("--normalization", default="normalization.npz")
-    eval_rollout.add_argument("--no-gif", action="store_true")
-    eval_rollout.add_argument("--gif-fps", type=int, default=8)
-    eval_rollout.add_argument("--gif-max-frames", type=int, default=180)
-    eval_rollout.set_defaults(handler="eval_rollout")
-
     benchmark = subparsers.add_parser("benchmark", help="Run nominal vs learned closed-loop benchmark")
     benchmark.add_argument("--config", default="configs/benchmark.yaml")
     benchmark.add_argument("--scenario-name", default="standard")
     benchmark.add_argument("--output", default="results/benchmark/standard_seed123")
     benchmark.add_argument("--episodes", type=int, default=1)
     benchmark.add_argument("--base-seed", type=int, default=123)
-    benchmark.add_argument("--backend", choices=["numpy", "cuda", "torch"], default=None)
+    benchmark.add_argument("--backend", choices=["numpy", "cuda", "torch"], default="torch")
     benchmark.add_argument("--controllers", default="nominal,learned")
     benchmark.add_argument("--fdm-model-dir", default="results/fdm_baselines/stage4_mlp_seed123_hardened")
     benchmark.add_argument("--fdm-checkpoint", default="best_model.pt")
     benchmark.add_argument("--fdm-normalization", default="normalization.npz")
     benchmark.add_argument("--fdm-device", default=None)
-    benchmark.add_argument("--fdm-residual-gain", type=float, default=1.0)
     benchmark.add_argument("--mppi-override", action="append", default=[], metavar="KEY=VALUE")
     benchmark.add_argument("--learned-mppi-override", action="append", default=[], metavar="KEY=VALUE")
     benchmark.set_defaults(handler="benchmark")

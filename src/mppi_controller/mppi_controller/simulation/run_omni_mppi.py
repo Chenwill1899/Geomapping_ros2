@@ -20,7 +20,6 @@ def run_omni_mppi(
     fdm_checkpoint: str | None = None,
     fdm_normalization: str | None = None,
     fdm_device: str | None = None,
-    fdm_residual_gain: float | None = None,
 ):
     args = argparse.Namespace(
         backend=backend,
@@ -29,7 +28,6 @@ def run_omni_mppi(
         fdm_checkpoint=fdm_checkpoint,
         fdm_normalization=fdm_normalization,
         fdm_device=fdm_device,
-        fdm_residual_gain=fdm_residual_gain,
     )
     config = load_config(config_path)
     config = apply_cli_overrides(config, args)
@@ -61,7 +59,6 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--fdm-checkpoint", default=None)
     parser.add_argument("--fdm-normalization", default=None)
     parser.add_argument("--fdm-device", default=None)
-    parser.add_argument("--fdm-residual-gain", type=float, default=None)
     args = parser.parse_args(argv)
 
     summary = run_omni_mppi(
@@ -73,7 +70,6 @@ def main(argv: list[str] | None = None) -> None:
         fdm_checkpoint=args.fdm_checkpoint,
         fdm_normalization=args.fdm_normalization,
         fdm_device=args.fdm_device,
-        fdm_residual_gain=args.fdm_residual_gain,
     )
     print_run_summary(summary)
 
@@ -83,6 +79,9 @@ def apply_cli_overrides(config: dict, args: argparse.Namespace) -> dict:
         config.setdefault("mppi", {})["backend"] = str(args.backend).lower()
     if args.fdm_enabled:
         config.setdefault("fdm", {})["enabled"] = True
+        config.setdefault("fdm", {})["mode"] = "sequence"
+        if args.backend is None and str(config.setdefault("mppi", {}).get("backend", "numpy")).lower() == "numpy":
+            config["mppi"]["backend"] = "torch"
     if args.fdm_model_dir is not None:
         config.setdefault("fdm", {})["model_dir"] = args.fdm_model_dir
     if args.fdm_checkpoint is not None:
@@ -91,9 +90,6 @@ def apply_cli_overrides(config: dict, args: argparse.Namespace) -> dict:
         config.setdefault("fdm", {})["normalization"] = args.fdm_normalization
     if args.fdm_device is not None:
         config.setdefault("fdm", {})["device"] = args.fdm_device
-    fdm_residual_gain = getattr(args, "fdm_residual_gain", None)
-    if fdm_residual_gain is not None:
-        config.setdefault("fdm", {})["residual_gain"] = float(fdm_residual_gain)
     return config
 
 

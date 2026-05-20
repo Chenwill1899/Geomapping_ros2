@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import tempfile
 from pathlib import Path
 
@@ -278,3 +279,190 @@ def build_sequence_fdm_windows(
             "timestep": t,
         })
     return windows
+
+
+def build_sequence_fdm_windows_from_raw_episode(
+    episode_dir: str | Path,
+    horizon_steps: int,
+    stride: int = 1,
+    costmap_grid_size: int = 9,
+    costmap_grid_span: float = 18.0,
+    costmap_max_age_s: float = 0.75,
+    costmap_max_value: float = 100.0,
+    risk_threshold: float = 0.6,
+) -> list[dict]:
+    """Extract sequence-FDM windows from a raw Geomapping episode directory.
+
+    The map input is costmap-only: it samples the saved ``reward_cost`` layer
+    from ``local_costmap.npz`` and ignores height/roughness/cost_map layers.
+    """
+    from mppi_controller.core.sequence_fdm_v2 import COSTMAP_GRID_DIM, COSTMAP_GRID_SIZE
+    from mppi_controller.core.terrain_grid import sample_local_costmap_grid_np
+
+    episode_dir = Path(episode_dir)
+    if int(costmap_grid_size) * int(costmap_grid_size) != COSTMAP_GRID_DIM:
+        raise ValueError(
+            f"costmap_grid_size must be {COSTMAP_GRID_SIZE} so the flattened input is {COSTMAP_GRID_DIM}-D"
+        )
+    odom = _read_numeric_csv(episode_dir / "odom.csv")
+    cmd = _read_numeric_csv(episode_dir / "cmd.csv")
+    localmap = np.load(episode_dir / "local_costmap.npz")
+    try:
+        stamps = np.asarray(odom["stamp"], dtype=np.float64)
+        states = np.stack(
+            [
+                np.asarray(odom["x"], dtype=np.float32),
+                np.asarray(odom["y"], dtype=np.float32),
+                np.asarray(odom["yaw"], dtype=np.float32),
+                np.asarray(odom["vx"], dtype=np.float32),
+                np.asarray(odom["vy"], dtype=np.float32),
+                np.asarray(odom["wz"], dtype=np.float32),
+            ],
+            axis=1,
+        )
+        commands = _commands_at_stamps(cmd, stamps)
+        costmap_stamps = np.asarray(localmap["stamp"], dtype=np.float64)
+        reward_cost = np.asarray(localmap["reward_cost"], dtype=np.float32)
+        origins = np.asarray(localmap["origin"], dtype=np.float32)
+        resolutions = np.asarray(localmap["resolution"], dtype=np.float32)
+        widths = np.asarray(localmap["width"], dtype=np.int32)
+        heights = np.asarray(localmap["height"], dtype=np.int32)
+    finally:
+        localmap.close()
+
+    horizon = int(horizon_steps)
+    if horizon <= 0:
+        raise ValueError("horizon_steps must be positive")
+    if costmap_stamps.size == 0 or reward_cost.size == 0:
+        return []
+
+    windows: list[dict] = []
+    max_start = len(states) - horizon
+    for start in range(0, max_start, int(stride)):
+        map_index = _nearest_index(costmap_stamps, stamps[start])
+        if map_index is None or abs(float(costmap_stamps[map_index] - stamps[start])) > float(costmap_max_age_s):
+            continue
+        state_t = states[start]
+        costmap_grid = sample_local_costmap_grid_np(
+            reward_cost[map_index],
+            origin=origins[map_index],
+            resolution=float(resolutions[map_index]),
+            width=int(widths[map_index]),
+            height=int(heights[map_index]),
+            x=float(state_t[0]),
+            y=float(state_t[1]),
+            size=int(costmap_grid_size),
+            span=float(costmap_grid_span),
+            max_value=float(costmap_max_value),
+        )
+        target_states = states[start + 1 : start + 1 + horizon]
+        target_risk = _target_risk_from_costmaps(
+            stamps[start + 1 : start + 1 + horizon],
+            target_states,
+            costmap_stamps=costmap_stamps,
+            reward_cost=reward_cost,
+            origins=origins,
+            resolutions=resolutions,
+            widths=widths,
+            heights=heights,
+            max_age_s=float(costmap_max_age_s),
+            max_value=float(costmap_max_value),
+            threshold=float(risk_threshold),
+        )
+        windows.append(
+            {
+                "state": state_t.astype(np.float32, copy=False),
+                "controls": commands[start : start + horizon].astype(np.float32, copy=False),
+                "costmap_grid": costmap_grid.astype(np.float32, copy=False),
+                # Kept as a compatibility alias for the existing V2 trainer.
+                "terrain_grid": costmap_grid.astype(np.float32, copy=False),
+                "target_states": target_states.astype(np.float32, copy=False),
+                "target_risk": target_risk.astype(np.float32, copy=False),
+                "episode_id": str(episode_dir),
+                "timestep": int(start),
+                "costmap_stamp": float(costmap_stamps[map_index]),
+                "costmap_age_s": float(abs(costmap_stamps[map_index] - stamps[start])),
+            }
+        )
+    return windows
+
+
+def _target_risk_from_costmaps(
+    stamps: np.ndarray,
+    states: np.ndarray,
+    *,
+    costmap_stamps: np.ndarray,
+    reward_cost: np.ndarray,
+    origins: np.ndarray,
+    resolutions: np.ndarray,
+    widths: np.ndarray,
+    heights: np.ndarray,
+    max_age_s: float,
+    max_value: float,
+    threshold: float,
+) -> np.ndarray:
+    from mppi_controller.core.terrain_grid import sample_local_costmap_grid_np
+
+    risks = np.zeros(len(states), dtype=np.float32)
+    for idx, state in enumerate(states):
+        map_index = _nearest_index(costmap_stamps, stamps[idx])
+        if map_index is None or abs(float(costmap_stamps[map_index] - stamps[idx])) > max_age_s:
+            continue
+        sampled = sample_local_costmap_grid_np(
+            reward_cost[map_index],
+            origin=origins[map_index],
+            resolution=float(resolutions[map_index]),
+            width=int(widths[map_index]),
+            height=int(heights[map_index]),
+            x=float(state[0]),
+            y=float(state[1]),
+            size=1,
+            span=0.0,
+            max_value=max_value,
+        )
+        risks[idx] = 1.0 if float(sampled[0]) >= threshold else 0.0
+    return risks
+
+
+def _read_numeric_csv(path: Path) -> dict[str, np.ndarray]:
+    with path.open("r", newline="", encoding="utf-8") as stream:
+        reader = csv.DictReader(stream)
+        rows = list(reader)
+    if not rows:
+        return {}
+    columns = {name: [] for name in rows[0]}
+    for row in rows:
+        for name, value in row.items():
+            columns[name].append(float(value))
+    return {name: np.asarray(values, dtype=np.float64) for name, values in columns.items()}
+
+
+def _commands_at_stamps(cmd: dict[str, np.ndarray], stamps: np.ndarray) -> np.ndarray:
+    if not cmd:
+        return np.zeros((len(stamps), 3), dtype=np.float32)
+    cmd_stamps = np.asarray(cmd["stamp"], dtype=np.float64)
+    command_values = np.stack(
+        [
+            np.asarray(cmd["linear_x"], dtype=np.float32),
+            np.asarray(cmd["linear_y"], dtype=np.float32),
+            np.asarray(cmd["angular_z"], dtype=np.float32),
+        ],
+        axis=1,
+    )
+    indices = np.searchsorted(cmd_stamps, stamps, side="right") - 1
+    indices = np.clip(indices, 0, len(command_values) - 1)
+    return command_values[indices].astype(np.float32, copy=False)
+
+
+def _nearest_index(values: np.ndarray, target: float) -> int | None:
+    if values.size == 0:
+        return None
+    index = int(np.searchsorted(values, float(target), side="left"))
+    candidates = []
+    if index < values.size:
+        candidates.append(index)
+    if index > 0:
+        candidates.append(index - 1)
+    if not candidates:
+        return None
+    return min(candidates, key=lambda idx: abs(float(values[idx] - target)))

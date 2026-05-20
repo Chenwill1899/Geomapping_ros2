@@ -149,6 +149,90 @@ def sample_terrain_risk_grid_np(
     return risk.reshape(-1)
 
 
+def sample_local_costmap_grid_np(
+    data: np.ndarray,
+    *,
+    origin: np.ndarray,
+    resolution: float,
+    width: int,
+    height: int,
+    x: float,
+    y: float,
+    size: int = 9,
+    span: float = 18.0,
+    max_value: float = 100.0,
+    unknown_value: float | None = None,
+) -> np.ndarray:
+    """Sample a normalized flat costmap grid centered on map-frame (x, y)."""
+    size = int(size)
+    if size <= 0:
+        raise ValueError("costmap grid size must be positive")
+    width = int(width)
+    height = int(height)
+    resolution = float(resolution)
+    flat = np.asarray(data, dtype=np.float32).reshape(-1)
+    if width <= 0 or height <= 0 or resolution <= 0.0 or flat.size != width * height:
+        return np.ones(size * size, dtype=np.float32)
+    origin_xy = np.asarray(origin, dtype=np.float32).reshape(2)
+    max_value = max(float(max_value), 1e-6)
+    fill_value = max_value if unknown_value is None else float(unknown_value)
+    half = float(span) / 2.0
+    xs = np.linspace(float(x) - half, float(x) + half, size, dtype=np.float32)
+    ys = np.linspace(float(y) - half, float(y) + half, size, dtype=np.float32)
+    grid_x, grid_y = np.meshgrid(xs, ys, indexing="ij")
+    ix = np.floor((grid_x - origin_xy[0]) / resolution).astype(np.int64)
+    iy = np.floor((grid_y - origin_xy[1]) / resolution).astype(np.int64)
+    valid = (ix >= 0) & (ix < width) & (iy >= 0) & (iy < height)
+    sampled = np.full((size, size), fill_value, dtype=np.float32)
+    if np.any(valid):
+        sampled[valid] = flat[iy[valid] * width + ix[valid]]
+    sampled = np.nan_to_num(sampled, nan=fill_value, posinf=fill_value, neginf=fill_value)
+    return (np.clip(sampled, 0.0, max_value) / max_value).astype(np.float32, copy=False).reshape(-1)
+
+
+def sample_local_costmap_grid_torch(
+    costmap: dict,
+    *,
+    x: float,
+    y: float,
+    size: int = 9,
+    span: float = 18.0,
+) -> torch.Tensor:
+    """Sample a normalized flat costmap grid from a Torch MPPI costmap dict."""
+    size = int(size)
+    if size <= 0:
+        raise ValueError("costmap grid size must be positive")
+    data = costmap.get("data")
+    device = data.device if isinstance(data, torch.Tensor) else torch.device("cpu")
+    width = int(costmap.get("width", 0))
+    height = int(costmap.get("height", 0))
+    resolution = float(costmap.get("resolution", 0.0))
+    if (
+        not bool(costmap.get("enabled", False))
+        or data is None
+        or width <= 0
+        or height <= 0
+        or resolution <= 0.0
+        or int(data.numel()) != width * height
+    ):
+        return torch.ones(size * size, dtype=torch.float32, device=device)
+    origin = costmap["origin"].to(dtype=torch.float32, device=device)
+    max_value = max(float(costmap.get("max_cost", 100.0)), 1e-6)
+    half = float(span) / 2.0
+    xs = torch.linspace(float(x) - half, float(x) + half, size, dtype=torch.float32, device=device)
+    ys = torch.linspace(float(y) - half, float(y) + half, size, dtype=torch.float32, device=device)
+    grid_x, grid_y = torch.meshgrid(xs, ys, indexing="ij")
+    ix = torch.floor((grid_x - origin[0]) / resolution).to(torch.long)
+    iy = torch.floor((grid_y - origin[1]) / resolution).to(torch.long)
+    valid = (ix >= 0) & (ix < width) & (iy >= 0) & (iy < height)
+    sampled = torch.full((size, size), max_value, dtype=torch.float32, device=device)
+    if bool(torch.any(valid).item()):
+        flat_idx = iy[valid] * width + ix[valid]
+        sampled[valid] = data.reshape(-1)[flat_idx].to(torch.float32)
+    sampled = torch.nan_to_num(sampled, nan=max_value, posinf=max_value, neginf=max_value)
+    return (torch.clamp(sampled, min=0.0, max=max_value) / max_value).reshape(-1)
+
+
 def sample_terrain_risk_grid_torch(
     terrain: TerrainField,
     x: float,
