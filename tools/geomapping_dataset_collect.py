@@ -108,7 +108,7 @@ class FailureThresholds:
     no_progress_min_delta_m: float = 0.2
     low_speed_window_s: float = 10.0
     low_speed_threshold_mps: float = 0.03
-    tltrajectory_timeout_s: float = 3.0
+    tltrajectory_timeout_s: float = 0.0
     goal_tolerance_m: float = 0.3
 
 
@@ -239,16 +239,6 @@ def classify_failure(
     if goal_reached(samples[-1], goal, thresholds.goal_tolerance_m):
         return None
 
-    tltrajectory_failure = _classify_tltrajectory_failure(
-        now=float(now),
-        episode_start=float(episode_start),
-        frontend_path_samples=frontend_path_samples or [],
-        tltrajectory_samples=tltrajectory_samples or [],
-        timeout_s=float(thresholds.tltrajectory_timeout_s),
-    )
-    if tltrajectory_failure is not None:
-        return tltrajectory_failure
-
     elapsed = float(now) - float(episode_start)
     if elapsed >= float(thresholds.goal_timeout_s):
         return Failure("timeout", f"goal timeout {thresholds.goal_timeout_s:.3f}s")
@@ -261,44 +251,6 @@ def classify_failure(
     if avg_speed is not None and avg_speed < float(thresholds.low_speed_threshold_mps):
         return Failure("low_speed_stall", f"average speed {avg_speed:.3f}m/s in {thresholds.low_speed_window_s:.3f}s")
 
-    return None
-
-
-def _classify_tltrajectory_failure(
-    *,
-    now: float,
-    episode_start: float,
-    frontend_path_samples: list[JsonRecord],
-    tltrajectory_samples: list[JsonRecord],
-    timeout_s: float,
-) -> Failure | None:
-    if timeout_s <= 0.0:
-        return None
-    frontend_samples = sorted(frontend_path_samples, key=lambda item: float(item.stamp))
-    if not frontend_samples:
-        return None
-    latest_frontend_stamp = float(frontend_samples[-1].stamp)
-    if float(now) - latest_frontend_stamp > timeout_s:
-        return None
-
-    tltrajectory_samples = sorted(tltrajectory_samples, key=lambda item: float(item.stamp))
-    if not tltrajectory_samples:
-        first_frontend_stamp = max(float(frontend_samples[0].stamp), float(episode_start))
-        if float(now) - first_frontend_stamp >= timeout_s:
-            return Failure(
-                "missing_tltrajectory",
-                f"no /tltrajectory for {timeout_s:.3f}s while frontend path is active",
-            )
-        return None
-
-    latest_tltrajectory_stamp = float(tltrajectory_samples[-1].stamp)
-    if latest_tltrajectory_stamp >= latest_frontend_stamp:
-        return None
-    if float(now) - latest_tltrajectory_stamp >= timeout_s:
-        return Failure(
-            "missing_tltrajectory",
-            f"stale /tltrajectory age {float(now) - latest_tltrajectory_stamp:.3f}s while frontend path is active",
-        )
     return None
 
 
@@ -1253,8 +1205,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--tltrajectory-timeout-s",
         type=float,
-        default=3.0,
-        help="Fail an episode if /smooth_path is active but /tltrajectory is absent or stale for this many seconds. Set <=0 to disable.",
+        default=0.0,
+        help="Deprecated and ignored. /tltrajectory is recorded when available, but missing samples do not fail an episode.",
     )
     parser.add_argument("--goal-tolerance-m", type=float, default=0.3)
     parser.add_argument("--reach-dwell-s", type=float, default=0.5)

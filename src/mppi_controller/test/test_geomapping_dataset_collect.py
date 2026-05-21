@@ -294,7 +294,7 @@ def test_failure_classifier_covers_default_failure_modes():
     ) == collect.Failure(reason="low_speed_stall", detail="average speed 0.010m/s in 10.000s")
 
 
-def test_failure_classifier_marks_missing_tltrajectory_when_frontend_path_is_active():
+def test_failure_classifier_ignores_missing_tltrajectory_when_frontend_path_is_active():
     collect = load_collector_module()
     thresholds = collect.FailureThresholds(
         goal_timeout_s=180.0,
@@ -320,7 +320,7 @@ def test_failure_classifier_marks_missing_tltrajectory_when_frontend_path_is_act
             collect.JsonRecord(stamp=7.5, payload={"point_count": 12}),
         ],
         tltrajectory_samples=[],
-    ) == collect.Failure(reason="missing_tltrajectory", detail="no /tltrajectory for 3.000s while frontend path is active")
+    ) is None
 
 
 def test_fake_runtime_smoke_writes_seed_episode_tree_and_manifest(tmp_path):

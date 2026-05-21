@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -eo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+set +u
 source /opt/ros/humble/setup.bash
 source "$ROOT_DIR/install/setup.bash"
+set -u
 
 export ROS_LOG_DIR="${ROS_LOG_DIR:-/tmp/ros_logs}"
 export MPLCONFIGDIR="${MPLCONFIGDIR:-/tmp/mplcfg}"
@@ -18,7 +20,7 @@ PROFILE="${PROFILE:-src/mppi_controller/configs/mujoco_rviz_goal.yaml}"
 CONTROLLER="${CONTROLLER:-nominal_cuda}"
 OBSTACLE_CONFIG="${OBSTACLE_CONFIG:-$ROOT_DIR/src/mppi_controller/configs/obstacle_scout_sparse.yaml}"
 NO_PROGRESS_WINDOW_S="${NO_PROGRESS_WINDOW_S:-45.0}"
-TLTRAJECTORY_TIMEOUT_S="${TLTRAJECTORY_TIMEOUT_S:-3.0}"
+TLTRAJECTORY_TIMEOUT_S="${TLTRAJECTORY_TIMEOUT_S:-0.0}"
 
 SEEDS=(
   213638760 852310503 994638366 182004044 820825164
