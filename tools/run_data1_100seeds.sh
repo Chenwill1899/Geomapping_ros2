@@ -14,6 +14,17 @@ export MPLCONFIGDIR="${MPLCONFIGDIR:-/tmp/mplcfg}"
 export PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
 mkdir -p "$ROS_LOG_DIR" "$MPLCONFIGDIR"
 
+cleanup_geomapping_runtime() {
+  pkill -f "ros2 launch ausim_geomapping_adapter ausim_scout_mppi_frontend.launch.py" 2>/dev/null || true
+  pkill -f "/home/mexxiie/prj/ausim2/build/bin/ausim_ros_bridge" 2>/dev/null || true
+  pkill -f "/home/mexxiie/prj/ausim2/build/bin/scout" 2>/dev/null || true
+  pkill -f "fdm_mppi mujoco-closed-loop" 2>/dev/null || true
+  pkill -f "/home/mexxiie/prj/ausim2/em_run.sh" 2>/dev/null || true
+}
+
+cleanup_geomapping_runtime
+trap cleanup_geomapping_runtime EXIT
+
 GOALS="${GOALS:-results/nav_dataset/_smoke_inputs/seed17_random10_obstacle_10m.yaml}"
 OUTPUT="${OUTPUT:-results/data1}"
 PROFILE="${PROFILE:-src/mppi_controller/configs/mujoco_rviz_goal.yaml}"
@@ -21,6 +32,7 @@ CONTROLLER="${CONTROLLER:-nominal_cuda}"
 OBSTACLE_CONFIG="${OBSTACLE_CONFIG:-$ROOT_DIR/src/mppi_controller/configs/obstacle_scout_sparse.yaml}"
 NO_PROGRESS_WINDOW_S="${NO_PROGRESS_WINDOW_S:-45.0}"
 TLTRAJECTORY_TIMEOUT_S="${TLTRAJECTORY_TIMEOUT_S:-0.0}"
+ROS_DOMAIN_ID_ARG="${ROS_DOMAIN_ID_ARG:-143}"
 
 SEEDS=(
   213638760 852310503 994638366 182004044 820825164
@@ -57,4 +69,5 @@ python3 tools/geomapping_dataset_collect.py \
   --continue-on-failure \
   --no-progress-window-s "$NO_PROGRESS_WINDOW_S" \
   --tltrajectory-timeout-s "$TLTRAJECTORY_TIMEOUT_S" \
+  --ros-domain-id "$ROS_DOMAIN_ID_ARG" \
   "$@"
