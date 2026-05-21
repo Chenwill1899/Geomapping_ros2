@@ -294,6 +294,35 @@ def test_failure_classifier_covers_default_failure_modes():
     ) == collect.Failure(reason="low_speed_stall", detail="average speed 0.010m/s in 10.000s")
 
 
+def test_failure_classifier_marks_missing_tltrajectory_when_frontend_path_is_active():
+    collect = load_collector_module()
+    thresholds = collect.FailureThresholds(
+        goal_timeout_s=180.0,
+        odom_timeout_s=2.0,
+        no_progress_window_s=60.0,
+        low_speed_window_s=60.0,
+        tltrajectory_timeout_s=3.0,
+        goal_tolerance_m=0.3,
+    )
+    goal = collect.Goal(id="g0", x=10.0, y=0.0, yaw=0.0)
+
+    assert collect.classify_failure(
+        now=8.0,
+        episode_start=0.0,
+        goal=goal,
+        odom_samples=[
+            collect.OdomRecord(stamp=7.9, x=2.0, y=0.0, yaw=0.0, vx=0.2, vy=0.0, wz=0.0),
+        ],
+        process_exits=[],
+        thresholds=thresholds,
+        frontend_path_samples=[
+            collect.JsonRecord(stamp=1.0, payload={"point_count": 3}),
+            collect.JsonRecord(stamp=7.5, payload={"point_count": 12}),
+        ],
+        tltrajectory_samples=[],
+    ) == collect.Failure(reason="missing_tltrajectory", detail="no /tltrajectory for 3.000s while frontend path is active")
+
+
 def test_fake_runtime_smoke_writes_seed_episode_tree_and_manifest(tmp_path):
     collect = load_collector_module()
     goals_path = tmp_path / "goals.yaml"
@@ -399,6 +428,78 @@ def test_continue_on_failure_attempts_all_goals_in_seed(tmp_path):
     assert summary["episodes"] == 3
     assert summary["success"] == 2
     assert summary["failed"] == 1
+
+
+def test_collect_dataset_prints_episode_status_after_each_episode(tmp_path, capsys):
+    collect = load_collector_module()
+    goals_path = tmp_path / "goals.yaml"
+    goals_path.write_text(
+        yaml.safe_dump(
+            {
+                "goals": [
+                    {"id": "g0", "x": 1.0, "y": 0.0, "yaw": 0.0},
+                    {"id": "g1", "x": 2.0, "y": 0.0, "yaw": 0.0},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    config = collect.CollectorConfig(
+        goals_path=goals_path,
+        seeds=[17],
+        output_dir=tmp_path / "dataset_run",
+        stop_on_failure=False,
+        thresholds=collect.FailureThresholds(),
+    )
+    runtime = FakeRuntime(
+        {
+            17: [
+                collect.EpisodeResult(status="success", failure_reason=None),
+                collect.EpisodeResult(status="failed", failure_reason="no_progress"),
+            ],
+        }
+    )
+
+    collect.collect_dataset(config, runtime_factory=lambda _: runtime)
+
+    output_lines = [line for line in capsys.readouterr().out.splitlines() if "episode_complete" in line]
+    assert output_lines == [
+        "[dataset] episode_complete seed=17 episode=1/2 goal=g0 status=success total=1 success=1 failed=0",
+        "[dataset] episode_complete seed=17 episode=2/2 goal=g1 status=failed reason=no_progress total=2 success=1 failed=1",
+    ]
+
+
+def test_goal_subscriber_ready_requires_mppi_node_name():
+    collect = load_collector_module()
+
+    assert not collect.goal_subscriber_ready(
+        subscription_count=2,
+        subscriber_names=["traversability_map", "rviz2"],
+        required_name="fdm_mppi_mujoco_closed_loop",
+    )
+    assert collect.goal_subscriber_ready(
+        subscription_count=3,
+        subscriber_names=["traversability_map", "/fdm_mppi_mujoco_closed_loop"],
+        required_name="fdm_mppi_mujoco_closed_loop",
+    )
+    assert collect.goal_subscriber_ready(
+        subscription_count=3,
+        subscriber_names=["/robot1/fdm_mppi_mujoco_closed_loop"],
+        required_name="fdm_mppi_mujoco_closed_loop",
+    )
+    assert collect.goal_subscriber_ready(
+        subscription_count=2,
+        subscriber_names=[],
+        required_name="",
+    )
+
+
+def test_choose_ros_domain_id_validates_explicit_domain():
+    collect = load_collector_module()
+
+    assert collect.choose_ros_domain_id(seed=17, configured_domain_id=42) == 42
+    with pytest.raises(ValueError, match="ROS_DOMAIN_ID"):
+        collect.choose_ros_domain_id(seed=17, configured_domain_id=233)
 
 
 def test_collect_dataset_passes_absolute_seed_dir_to_runtime(tmp_path, monkeypatch):

@@ -6,7 +6,7 @@ import numpy as np
 import torch
 
 from mppi_controller.controllers.mppi_omni_torch import MppiOmniTorch
-from mppi_controller.core.sequence_fdm_v2 import COSTMAP_GRID_DIM, COSTMAP_GRID_SIZE
+from mppi_controller.core.sequence_fdm_v2 import COSTMAP_GRID_DIM, COSTMAP_GRID_SIZE, GOAL_PATH_FEATURE_DIM
 from mppi_controller.core.sequence_fdm_dynamics import SequenceFdmDynamics
 from mppi_controller.core.terrain import TerrainField
 from mppi_controller.core.terrain_grid import sample_local_costmap_grid_torch
@@ -73,6 +73,11 @@ class MppiOmniSequenceFdmV2Torch(MppiOmniTorch):
             )
         costmap_grid = costmap_grid.unsqueeze(0).expand(num_samples, -1)
         self._profile_stop("costmap_grid_ms", profile_start)
+        goal_path_features = (
+            self._goal_path_features_torch(initial_state, goal, path)
+            .unsqueeze(0)
+            .expand(num_samples, -1)
+        )
 
         # 2. Prepare state tensor
         state_t = torch.as_tensor(
@@ -83,7 +88,12 @@ class MppiOmniSequenceFdmV2Torch(MppiOmniTorch):
 
         # 3. FDM forward pass (gradients retained)
         profile_start = self._profile_start()
-        pred_states, pred_risk_logits = self.sequence_dynamics.predict_torch(state_t, controls, costmap_grid)
+        pred_states, pred_risk_logits = self.sequence_dynamics.predict_torch(
+            state_t,
+            controls,
+            costmap_grid,
+            goal_path_features,
+        )
         self._profile_stop("fdm_inference_ms", profile_start)
 
         # 4. Binary risk from logits
@@ -120,3 +130,54 @@ class MppiOmniSequenceFdmV2Torch(MppiOmniTorch):
             + obstacle_cost
             + risk_cost
         ).to(torch.float32)
+
+    def _goal_path_features_torch(
+        self,
+        initial_state: np.ndarray,
+        goal: torch.Tensor,
+        path: torch.Tensor | None,
+    ) -> torch.Tensor:
+        state = torch.as_tensor(
+            np.asarray(initial_state, dtype=np.float32).reshape(6),
+            dtype=torch.float32,
+            device=self.torch_device,
+        )
+        goal = goal.to(dtype=torch.float32, device=self.torch_device).reshape(-1)
+        rel_goal = self._world_to_body_delta_torch(state, goal[:2])
+        goal_distance = torch.linalg.norm(goal[:2] - state[:2])
+        goal_yaw_error = self._angle_diff_torch(goal[2], state[2])
+
+        path_available = torch.tensor(0.0, dtype=torch.float32, device=self.torch_device)
+        lookahead = torch.zeros(2, dtype=torch.float32, device=self.torch_device)
+        path_end = torch.zeros(2, dtype=torch.float32, device=self.torch_device)
+        path_length = torch.tensor(0.0, dtype=torch.float32, device=self.torch_device)
+        if path is not None and int(path.numel()) >= 4:
+            path_t = path.reshape(-1, 2).to(dtype=torch.float32, device=self.torch_device)
+            if path_t.shape[0] >= 2:
+                path_available = torch.tensor(1.0, dtype=torch.float32, device=self.torch_device)
+                lookahead = self._world_to_body_delta_torch(state, path_t[min(1, path_t.shape[0] - 1)])
+                path_end = self._world_to_body_delta_torch(state, path_t[-1])
+                path_length = torch.sum(torch.linalg.norm(path_t[1:] - path_t[:-1], dim=1))
+        return torch.cat(
+            [
+                rel_goal,
+                goal_distance.view(1),
+                goal_yaw_error.view(1),
+                lookahead,
+                path_end,
+                path_length.view(1),
+                path_available.view(1),
+            ],
+            dim=0,
+        ).reshape(GOAL_PATH_FEATURE_DIM)
+
+    def _world_to_body_delta_torch(self, state: torch.Tensor, point_xy: torch.Tensor) -> torch.Tensor:
+        delta = point_xy.to(dtype=torch.float32, device=self.torch_device).reshape(2) - state[:2]
+        cos_yaw = torch.cos(state[2])
+        sin_yaw = torch.sin(state[2])
+        return torch.stack(
+            [
+                cos_yaw * delta[0] + sin_yaw * delta[1],
+                -sin_yaw * delta[0] + cos_yaw * delta[1],
+            ]
+        )

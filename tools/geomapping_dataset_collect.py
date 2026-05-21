@@ -29,6 +29,8 @@ DEFAULT_PROFILE = GEOMAPPING_ROOT / "src" / "mppi_controller" / "configs" / "muj
 DEFAULT_OBSTACLE_CONFIG = GEOMAPPING_ROOT / "src" / "mppi_controller" / "configs" / "obstacle_scout_sparse.yaml"
 DEFAULT_OUTPUT_ROOT = GEOMAPPING_ROOT / "results" / "nav_dataset"
 CONTROLLER_EXECUTABLE = GEOMAPPING_ROOT / "install" / "mppi_controller" / "lib" / "mppi_controller" / "fdm_mppi"
+AUTO_ROS_DOMAIN_MIN = 50
+AUTO_ROS_DOMAIN_SPAN = 180
 
 
 @dataclass(frozen=True)
@@ -106,6 +108,7 @@ class FailureThresholds:
     no_progress_min_delta_m: float = 0.2
     low_speed_window_s: float = 10.0
     low_speed_threshold_mps: float = 0.03
+    tltrajectory_timeout_s: float = 3.0
     goal_tolerance_m: float = 0.3
 
 
@@ -140,6 +143,8 @@ class CollectorConfig:
     controller_odom_timeout_s: float = 30.0
     readiness_timeout_odom_s: float = 60.0
     readiness_timeout_goal_subscriber_s: float = 60.0
+    mppi_goal_subscriber_name: str = "fdm_mppi_mujoco_closed_loop"
+    ros_domain_id: int | None = None
     reach_dwell_s: float = 0.5
 
 
@@ -214,6 +219,8 @@ def classify_failure(
     odom_samples: list[OdomRecord],
     process_exits: list[ProcessExit],
     thresholds: FailureThresholds,
+    frontend_path_samples: list[JsonRecord] | None = None,
+    tltrajectory_samples: list[JsonRecord] | None = None,
 ) -> Failure | None:
     if process_exits:
         exit_info = process_exits[0]
@@ -232,6 +239,16 @@ def classify_failure(
     if goal_reached(samples[-1], goal, thresholds.goal_tolerance_m):
         return None
 
+    tltrajectory_failure = _classify_tltrajectory_failure(
+        now=float(now),
+        episode_start=float(episode_start),
+        frontend_path_samples=frontend_path_samples or [],
+        tltrajectory_samples=tltrajectory_samples or [],
+        timeout_s=float(thresholds.tltrajectory_timeout_s),
+    )
+    if tltrajectory_failure is not None:
+        return tltrajectory_failure
+
     elapsed = float(now) - float(episode_start)
     if elapsed >= float(thresholds.goal_timeout_s):
         return Failure("timeout", f"goal timeout {thresholds.goal_timeout_s:.3f}s")
@@ -247,8 +264,73 @@ def classify_failure(
     return None
 
 
+def _classify_tltrajectory_failure(
+    *,
+    now: float,
+    episode_start: float,
+    frontend_path_samples: list[JsonRecord],
+    tltrajectory_samples: list[JsonRecord],
+    timeout_s: float,
+) -> Failure | None:
+    if timeout_s <= 0.0:
+        return None
+    frontend_samples = sorted(frontend_path_samples, key=lambda item: float(item.stamp))
+    if not frontend_samples:
+        return None
+    latest_frontend_stamp = float(frontend_samples[-1].stamp)
+    if float(now) - latest_frontend_stamp > timeout_s:
+        return None
+
+    tltrajectory_samples = sorted(tltrajectory_samples, key=lambda item: float(item.stamp))
+    if not tltrajectory_samples:
+        first_frontend_stamp = max(float(frontend_samples[0].stamp), float(episode_start))
+        if float(now) - first_frontend_stamp >= timeout_s:
+            return Failure(
+                "missing_tltrajectory",
+                f"no /tltrajectory for {timeout_s:.3f}s while frontend path is active",
+            )
+        return None
+
+    latest_tltrajectory_stamp = float(tltrajectory_samples[-1].stamp)
+    if latest_tltrajectory_stamp >= latest_frontend_stamp:
+        return None
+    if float(now) - latest_tltrajectory_stamp >= timeout_s:
+        return Failure(
+            "missing_tltrajectory",
+            f"stale /tltrajectory age {float(now) - latest_tltrajectory_stamp:.3f}s while frontend path is active",
+        )
+    return None
+
+
 def goal_reached(sample: OdomRecord, goal: Goal, tolerance_m: float) -> bool:
     return _goal_distance(sample, goal) <= float(tolerance_m)
+
+
+def goal_subscriber_ready(
+    *,
+    subscription_count: int,
+    subscriber_names: list[str],
+    required_name: str,
+    fallback_min_count: int = 2,
+) -> bool:
+    required = str(required_name).strip()
+    if not required:
+        return int(subscription_count) >= int(fallback_min_count)
+    for name in subscriber_names:
+        normalized = str(name).strip().strip("/")
+        if normalized == required or normalized.endswith(f"/{required}"):
+            return True
+    return False
+
+
+def choose_ros_domain_id(seed: int, configured_domain_id: int | None) -> int:
+    if configured_domain_id is not None:
+        domain_id = int(configured_domain_id)
+        if domain_id < 0 or domain_id > 232:
+            raise ValueError("ROS_DOMAIN_ID must be in [0, 232]")
+        return domain_id
+    salt = os.getpid() + int(time.monotonic() * 1000.0)
+    return AUTO_ROS_DOMAIN_MIN + ((int(seed) + salt) % AUTO_ROS_DOMAIN_SPAN)
 
 
 def write_episode_artifacts(
@@ -470,6 +552,15 @@ def collect_dataset(
                     summary["success"] += 1
                 else:
                     summary["failed"] += 1
+                print_episode_status(
+                    seed=int(seed),
+                    episode_index=episode_index,
+                    total_goals=len(goals),
+                    goal=goal,
+                    result=result,
+                    summary=summary,
+                )
+                if result.status != "success":
                     if config.stop_on_failure:
                         break
             summary["seeds_completed"] += 1
@@ -489,12 +580,18 @@ class RealGeomappingRuntime:
         self.recorder: RosDatasetRecorder | None = None
         self.seed_dir: Path | None = None
         self.native_run_dir: Path | None = None
+        self._previous_ros_domain_id: str | None = None
+        self._ros_domain_active = False
 
     def start_seed(self, seed: int, seed_dir: Path, config: CollectorConfig) -> None:
         self.config = config
         self.seed_dir = seed_dir
         log_path = seed_dir / "seed.log"
         env = process_env()
+        ros_domain_id = choose_ros_domain_id(seed, config.ros_domain_id)
+        env["ROS_DOMAIN_ID"] = str(ros_domain_id)
+        self._activate_ros_domain(ros_domain_id)
+        print("[dataset] seed_start", f"seed={int(seed)}", f"ros_domain_id={ros_domain_id}", flush=True)
         prepared_obstacle_config = prepare_obstacle_config(
             scene_dir=seed_dir / "scene",
             scene_seed=seed,
@@ -577,6 +674,8 @@ class RealGeomappingRuntime:
                 odom_samples=odom_window,
                 process_exits=process_exits,
                 thresholds=thresholds,
+                frontend_path_samples=recorder.buffer.slice("frontend_path", start_time, now + 1e-6),
+                tltrajectory_samples=recorder.buffer.slice("tltrajectory", start_time, now + 1e-6),
             )
             if failure is not None:
                 break
@@ -609,6 +708,7 @@ class RealGeomappingRuntime:
         if self.recorder is not None:
             self.recorder.shutdown()
             self.recorder = None
+        self._restore_ros_domain()
 
     def _wait_ready(self) -> None:
         assert self.recorder is not None
@@ -624,10 +724,37 @@ class RealGeomappingRuntime:
             raise RuntimeError("odom readiness timeout")
 
         goal_deadline = time.monotonic() + float(self.config.readiness_timeout_goal_subscriber_s)
+        required_goal_subscriber = str(self.config.mppi_goal_subscriber_name).strip()
+        last_goal_wait_log = 0.0
         while time.monotonic() < goal_deadline:
             self.recorder.spin_once(0.1)
-            if self.recorder.goal_subscription_count() >= 2:
+            count = self.recorder.goal_subscription_count()
+            names = self.recorder.goal_subscription_names()
+            if goal_subscriber_ready(
+                subscription_count=count,
+                subscriber_names=names,
+                required_name=required_goal_subscriber,
+            ):
+                print(
+                    "[dataset] goal_subscriber_ready",
+                    f"topic={self.config.goal_topic}",
+                    f"count={count}",
+                    f"required={required_goal_subscriber or 'count_only'}",
+                    f"subscribers={','.join(names) if names else 'unknown'}",
+                    flush=True,
+                )
                 return
+            now = time.monotonic()
+            if now - last_goal_wait_log >= 5.0:
+                print(
+                    "[dataset] waiting_for_goal_subscriber",
+                    f"topic={self.config.goal_topic}",
+                    f"count={count}",
+                    f"required={required_goal_subscriber or 'count_only'}",
+                    f"subscribers={','.join(names) if names else 'unknown'}",
+                    flush=True,
+                )
+                last_goal_wait_log = now
             exits = self._process_exits()
             if exits:
                 raise RuntimeError(f"{exits[0].name} exited with code {exits[0].returncode}")
@@ -640,6 +767,22 @@ class RealGeomappingRuntime:
             if code is not None:
                 exits.append(ProcessExit(name=name, returncode=code))
         return exits
+
+    def _activate_ros_domain(self, ros_domain_id: int) -> None:
+        if not self._ros_domain_active:
+            self._previous_ros_domain_id = os.environ.get("ROS_DOMAIN_ID")
+        os.environ["ROS_DOMAIN_ID"] = str(int(ros_domain_id))
+        self._ros_domain_active = True
+
+    def _restore_ros_domain(self) -> None:
+        if not self._ros_domain_active:
+            return
+        if self._previous_ros_domain_id is None:
+            os.environ.pop("ROS_DOMAIN_ID", None)
+        else:
+            os.environ["ROS_DOMAIN_ID"] = self._previous_ros_domain_id
+        self._previous_ros_domain_id = None
+        self._ros_domain_active = False
 
 
 class RosDatasetRecorder:
@@ -684,6 +827,23 @@ class RosDatasetRecorder:
 
     def goal_subscription_count(self) -> int:
         return int(self.goal_pub.get_subscription_count())
+
+    def goal_subscription_names(self) -> list[str]:
+        try:
+            infos = self.node.get_subscriptions_info_by_topic(self.config.goal_topic)
+        except Exception:
+            return []
+        names: list[str] = []
+        for info in infos:
+            node_name = str(getattr(info, "node_name", "") or "").strip()
+            if not node_name:
+                continue
+            namespace = str(getattr(info, "node_namespace", "") or "").strip()
+            if namespace and namespace != "/":
+                names.append(f"{namespace.rstrip('/')}/{node_name}")
+            else:
+                names.append(node_name)
+        return sorted(set(names))
 
     def publish_goal(self, goal: Goal) -> None:
         message = self._pose_stamped_type()
@@ -1002,6 +1162,34 @@ def append_jsonl(path: str | Path, entry: dict[str, Any]) -> None:
         stream.write(json.dumps(entry, sort_keys=True) + "\n")
 
 
+def print_episode_status(
+    *,
+    seed: int,
+    episode_index: int,
+    total_goals: int,
+    goal: Goal,
+    result: EpisodeResult,
+    summary: dict[str, Any],
+) -> None:
+    parts = [
+        "[dataset] episode_complete",
+        f"seed={int(seed)}",
+        f"episode={int(episode_index) + 1}/{int(total_goals)}",
+        f"goal={goal.id}",
+        f"status={result.status}",
+    ]
+    if result.failure_reason:
+        parts.append(f"reason={result.failure_reason}")
+    parts.extend(
+        [
+            f"total={int(summary['episodes'])}",
+            f"success={int(summary['success'])}",
+            f"failed={int(summary['failed'])}",
+        ]
+    )
+    print(" ".join(parts), flush=True)
+
+
 def safe_tag(value: str) -> str:
     tag = re.sub(r"[^A-Za-z0-9._-]+", "_", str(value).strip())
     return tag.strip("_") or "goal"
@@ -1062,10 +1250,27 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-progress-min-delta-m", type=float, default=0.2)
     parser.add_argument("--low-speed-window-s", type=float, default=10.0)
     parser.add_argument("--low-speed-threshold-mps", type=float, default=0.03)
+    parser.add_argument(
+        "--tltrajectory-timeout-s",
+        type=float,
+        default=3.0,
+        help="Fail an episode if /smooth_path is active but /tltrajectory is absent or stale for this many seconds. Set <=0 to disable.",
+    )
     parser.add_argument("--goal-tolerance-m", type=float, default=0.3)
     parser.add_argument("--reach-dwell-s", type=float, default=0.5)
     parser.add_argument("--readiness-timeout-odom-s", type=float, default=60.0)
     parser.add_argument("--readiness-timeout-goal-subscriber-s", type=float, default=60.0)
+    parser.add_argument(
+        "--mppi-goal-subscriber-name",
+        default="fdm_mppi_mujoco_closed_loop",
+        help="Required ROS node name subscribed to the goal topic before the first episode starts. Set empty for count-only readiness.",
+    )
+    parser.add_argument(
+        "--ros-domain-id",
+        type=int,
+        default=None,
+        help="ROS_DOMAIN_ID for all launched processes. Defaults to an auto-selected isolated domain per seed.",
+    )
     return parser
 
 
@@ -1085,6 +1290,7 @@ def config_from_args(args: argparse.Namespace) -> CollectorConfig:
             no_progress_min_delta_m=float(args.no_progress_min_delta_m),
             low_speed_window_s=float(args.low_speed_window_s),
             low_speed_threshold_mps=float(args.low_speed_threshold_mps),
+            tltrajectory_timeout_s=float(args.tltrajectory_timeout_s),
             goal_tolerance_m=float(args.goal_tolerance_m),
         ),
         profile=Path(args.profile).expanduser(),
@@ -1103,6 +1309,8 @@ def config_from_args(args: argparse.Namespace) -> CollectorConfig:
         controller_odom_timeout_s=float(args.controller_odom_timeout_s),
         readiness_timeout_odom_s=float(args.readiness_timeout_odom_s),
         readiness_timeout_goal_subscriber_s=float(args.readiness_timeout_goal_subscriber_s),
+        mppi_goal_subscriber_name=str(args.mppi_goal_subscriber_name),
+        ros_domain_id=None if args.ros_domain_id is None else int(args.ros_domain_id),
         reach_dwell_s=float(args.reach_dwell_s),
     )
 
@@ -1347,6 +1555,8 @@ def _write_run_config(config: CollectorConfig, goals: list[Goal], path: Path) ->
         "reach_dwell_s": float(config.reach_dwell_s),
         "readiness_timeout_odom_s": float(config.readiness_timeout_odom_s),
         "readiness_timeout_goal_subscriber_s": float(config.readiness_timeout_goal_subscriber_s),
+        "mppi_goal_subscriber_name": str(config.mppi_goal_subscriber_name),
+        "ros_domain_id": "auto" if config.ros_domain_id is None else int(config.ros_domain_id),
     }
     path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
 

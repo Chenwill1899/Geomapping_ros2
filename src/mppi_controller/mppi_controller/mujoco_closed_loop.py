@@ -228,6 +228,100 @@ def angle_diff(target: float, current: float) -> float:
     return float((target - current + math.pi) % (2.0 * math.pi) - math.pi)
 
 
+@dataclass(frozen=True)
+class MotionPolicyConfig:
+    allow_reverse: bool = True
+    rotate_then_translate_enabled: bool = False
+    enter_angle_rad: float = math.radians(100.0)
+    exit_angle_rad: float = math.radians(45.0)
+    min_distance: float = 0.5
+    wz_gain: float = 1.2
+    max_wz: float = 1.0
+
+    @classmethod
+    def from_config(cls, config: dict[str, Any]) -> "MotionPolicyConfig":
+        cfg = config.get("motion_policy", {})
+        rotate_cfg = cfg.get("rotate_then_translate", {})
+        if not isinstance(rotate_cfg, dict):
+            rotate_cfg = {}
+        robot = config.get("robot", {})
+        final_cfg = config.get("final_controller", {})
+        enter_angle_deg = float(rotate_cfg.get("enter_angle_deg", cfg.get("behind_angle_deg", 100.0)))
+        exit_angle_deg = float(rotate_cfg.get("exit_angle_deg", 45.0))
+        enter_angle_deg = float(np.clip(enter_angle_deg, 1.0, 180.0))
+        enter_angle_rad = math.radians(enter_angle_deg)
+        exit_angle_rad = math.radians(float(np.clip(exit_angle_deg, 0.0, enter_angle_deg)))
+        return cls(
+            allow_reverse=bool(cfg.get("allow_reverse", True)),
+            rotate_then_translate_enabled=bool(rotate_cfg.get("enabled", False)),
+            enter_angle_rad=enter_angle_rad,
+            exit_angle_rad=exit_angle_rad,
+            min_distance=max(
+                float(rotate_cfg.get("min_distance", config.get("simulation", {}).get("minimum_distance", 0.5))),
+                0.0,
+            ),
+            wz_gain=max(float(rotate_cfg.get("wz_gain", final_cfg.get("wz_gain", 1.2))), 0.0),
+            max_wz=max(float(rotate_cfg.get("max_wz", robot.get("max_wz", 1.0))), 0.0),
+        )
+
+
+@dataclass
+class MotionPolicyState:
+    rotate_then_translate_active: bool = False
+    rotate_then_translate_start_pending: bool = True
+
+    def reset(self) -> None:
+        self.rotate_then_translate_active = False
+        self.rotate_then_translate_start_pending = True
+
+    def disarm_rotate_then_translate(self) -> None:
+        self.rotate_then_translate_active = False
+        self.rotate_then_translate_start_pending = False
+
+
+def apply_motion_policy_to_command(
+    state: np.ndarray,
+    goal: np.ndarray | None,
+    command: np.ndarray,
+    cfg: MotionPolicyConfig,
+    policy_state: MotionPolicyState,
+) -> np.ndarray:
+    cmd = np.asarray(command, dtype=np.float32).reshape(3).copy()
+    if not bool(cfg.allow_reverse):
+        cmd[0] = max(float(cmd[0]), 0.0)
+    if goal is None or not bool(cfg.rotate_then_translate_enabled):
+        policy_state.reset()
+        return cmd
+
+    state_arr = np.asarray(state, dtype=np.float32).reshape(6)
+    goal_arr = np.asarray(goal, dtype=np.float32).reshape(6)
+    delta = goal_arr[:2] - state_arr[:2]
+    distance = float(np.linalg.norm(delta))
+    if distance <= float(cfg.min_distance) or not math.isfinite(distance):
+        policy_state.disarm_rotate_then_translate()
+        return cmd
+
+    target_yaw = math.atan2(float(delta[1]), float(delta[0]))
+    heading_error = angle_diff(target_yaw, float(state_arr[2]))
+    abs_heading_error = abs(heading_error)
+    if policy_state.rotate_then_translate_active:
+        policy_state.rotate_then_translate_start_pending = False
+        if abs_heading_error <= float(cfg.exit_angle_rad):
+            policy_state.disarm_rotate_then_translate()
+            return cmd
+    elif policy_state.rotate_then_translate_start_pending:
+        policy_state.rotate_then_translate_start_pending = False
+        if abs_heading_error >= float(cfg.enter_angle_rad):
+            policy_state.rotate_then_translate_active = True
+
+    if not policy_state.rotate_then_translate_active:
+        return cmd
+
+    rotate_cmd = np.zeros(3, dtype=np.float32)
+    rotate_cmd[2] = float(np.clip(float(cfg.wz_gain) * heading_error, -float(cfg.max_wz), float(cfg.max_wz)))
+    return rotate_cmd
+
+
 def final_approach_control(state: np.ndarray, goal: np.ndarray, config: dict[str, Any]) -> np.ndarray | None:
     cfg = config.get("final_controller", {})
     if not bool(cfg.get("enabled", False)):
@@ -2139,12 +2233,16 @@ def run_mujoco_closed_loop_profile(
 
 def _run_ros_node(config: dict[str, Any], metadata: dict[str, Any], *, spin_once_timeout: float) -> dict[str, Any]:
     import rclpy
+    from rclpy.executors import ExternalShutdownException
 
     rclpy.init(args=None)
     node = MujocoClosedLoopNode(config, metadata)
     try:
         while rclpy.ok() and not node.finished:
-            rclpy.spin_once(node._node, timeout_sec=spin_once_timeout)
+            try:
+                rclpy.spin_once(node._node, timeout_sec=spin_once_timeout)
+            except ExternalShutdownException:
+                break
     finally:
         result = node.result
         node.destroy_node()
@@ -2209,6 +2307,8 @@ class MujocoClosedLoopNode:
         self.external_path_recovery = ExternalPathRecoveryState()
         self.local_goal = LocalGoalConfig.from_config(config)
         self.global_path = GlobalPathConfig.from_config(config)
+        self.motion_policy = MotionPolicyConfig.from_config(config)
+        self.motion_policy_state = MotionPolicyState()
         self.command_filter = CommandFilterConfig.from_config(config)
         goal_topic_cfg = config.get("goal_topic", {})
         self.goal_topic_enabled = bool(goal_topic_cfg.get("enabled", False))
@@ -2255,6 +2355,7 @@ class MujocoClosedLoopNode:
         self.selected_path_pub = None
         self.history_path_pub = None
         self.robot_marker_pub = None
+        self.rviz_publish_error_logged = False
         if self.rviz_enabled:
             self.rollout_marker_pub = self._node.create_publisher(MarkerArray, self.rviz_sample_topic, 10)
             self.sample_path_pubs = [
@@ -2395,6 +2496,7 @@ class MujocoClosedLoopNode:
         self.path_plan_id = None
         self.external_path.clear()
         self.external_path_recovery.reset()
+        self.motion_policy_state.reset()
         self._node.get_logger().info(
             f"Updated MPPI goal from {self.goal_topic}: "
             f"x={self.goal[0]:.2f} y={self.goal[1]:.2f} yaw={self.goal[2]:.2f}"
@@ -2421,6 +2523,7 @@ class MujocoClosedLoopNode:
             return
         if runtime_goal_required(self.config) and self.goal is None:
             self.previous_command[:] = 0.0
+            self.motion_policy_state.reset()
             self.publisher.publish(self._twist_type())
             if not self.waiting_for_goal_logged:
                 self._node.get_logger().info(f"Waiting for RViz goal on {self.goal_topic}")
@@ -2523,41 +2626,48 @@ class MujocoClosedLoopNode:
                     self.goal,
                 ],
             )
-            if self.goal is not None and self.drive_mode not in {"omni", "omni_freejoint", "holonomic"}:
-                goal_vec = self.goal[:2] - state[:2]
-                goal_dist = float(np.linalg.norm(goal_vec))
-                if goal_dist > 1.5:
-                    target_yaw = math.atan2(float(goal_vec[1]), float(goal_vec[0]))
-                    heading_err = angle_diff(target_yaw, float(state[2]))
-                    if abs(heading_err) > math.radians(45.0):
-                        max_wz = float(self.config["robot"]["max_wz"])
-                        raw_u = np.array([0.0, 0.0, np.sign(heading_err) * max_wz], dtype=np.float32)
-                        optimal_u = raw_u.copy()
-                        sample_u = None
         else:
             raw_u = final_u
             min_cost = 0.0
         elapsed_ms = (time.time() - start) * 1000.0
         raw_u = apply_reactive_obstacle_avoidance(state, raw_u, obstacles, self.config)
+        motion_policy_goal = self.goal if self.goal is not None else planning_goal
+        raw_u = apply_motion_policy_to_command(
+            state,
+            motion_policy_goal,
+            raw_u,
+            self.motion_policy,
+            self.motion_policy_state,
+        )
+        if self.motion_policy.rotate_then_translate_enabled and self.motion_policy_state.rotate_then_translate_active:
+            optimal_u = raw_u.copy()
+            sample_u = None
         previous_command_for_preview = self.previous_command.copy()
         distance_to_goal = None if self.goal is None else float(np.linalg.norm(self.goal[:2] - state[:2]))
+        filter_previous = np.zeros_like(self.previous_command) if self.motion_policy_state.rotate_then_translate_active else self.previous_command
         filtered_u = filter_mujoco_command(
             raw_u,
-            self.previous_command,
+            filter_previous,
             self.command_filter,
             self.command_dt,
             distance_to_goal=distance_to_goal,
         )
+        if self.motion_policy_state.rotate_then_translate_active:
+            filtered_u[:2] = 0.0
         self.previous_command = filtered_u.copy()
         twist, command = mujoco_twist_command(filtered_u, drive_mode=self.drive_mode, twist_factory=self._twist_type)
         self.publisher.publish(twist)
-        self._publish_rviz_markers(
-            state,
-            sample_u,
-            optimal_u,
-            preview_previous_command=previous_command_for_preview,
-            distance_to_goal=distance_to_goal,
-        )
+        try:
+            self._publish_rviz_markers(
+                state,
+                sample_u,
+                optimal_u,
+                preview_previous_command=previous_command_for_preview,
+                distance_to_goal=distance_to_goal,
+            )
+        except Exception as exc:
+            if not self._handle_rviz_publish_error(exc):
+                raise
         terrain_features = self.terrain.feature(float(state[0]), float(state[1]))
         terrain_risk = self.terrain.risk_cost(float(state[0]), float(state[1]), features=terrain_features)
         self.recorder.record_step(
@@ -2651,6 +2761,16 @@ class MujocoClosedLoopNode:
                 )
             )
         self.rollout_marker_pub.publish(marker_array)
+
+    def _handle_rviz_publish_error(self, exc: Exception) -> bool:
+        message = str(exc).lower()
+        if self._rclpy.ok() and "context is invalid" not in message:
+            return False
+        self.rviz_enabled = False
+        if not self.rviz_publish_error_logged:
+            self._node.get_logger().warning(f"Disabling RViz marker publishing after publish error: {exc}")
+            self.rviz_publish_error_logged = True
+        return True
 
     def _path_message(self, states: np.ndarray, *, stamp: Any, z: float = 0.10):
         path = self._path_type()
@@ -2777,6 +2897,7 @@ class MujocoClosedLoopNode:
         self.path_plan_id = None
         self.external_path.clear()
         self.external_path_recovery.reset()
+        self.motion_policy_state.reset()
         self.rviz_history_path = np.empty((0, 6), dtype=np.float32)
         if hasattr(self.controller, "nominal_u"):
             self.controller.nominal_u = np.zeros_like(self.controller.nominal_u)
