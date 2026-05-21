@@ -10,7 +10,7 @@ import torch
 from torch import nn
 from torch.utils.data import Dataset, DataLoader
 
-from mppi_controller.core.sequence_fdm_v2 import COSTMAP_GRID_DIM
+from mppi_controller.core.sequence_fdm_v2 import COSTMAP_GRID_DIM, GOAL_PATH_FEATURE_DIM
 
 
 class SequenceFdmDataset(Dataset):
@@ -28,9 +28,10 @@ class SequenceFdmDataset(Dataset):
         state = torch.as_tensor(w["state"], dtype=torch.float32)
         controls = torch.as_tensor(w["controls"], dtype=torch.float32)
         costmap_grid = torch.as_tensor(_window_costmap_grid(w), dtype=torch.float32)
+        goal_path_features = torch.as_tensor(_window_goal_path_features(w), dtype=torch.float32)
         target_states = torch.as_tensor(w["target_states"], dtype=torch.float32)
         target_risk = torch.as_tensor(w["target_risk"], dtype=torch.float32)
-        return state, controls, costmap_grid, target_states, target_risk
+        return state, controls, costmap_grid, goal_path_features, target_states, target_risk
 
 
 def _window_costmap_grid(window: dict) -> np.ndarray:
@@ -41,6 +42,13 @@ def _window_costmap_grid(window: dict) -> np.ndarray:
     if grid.reshape(-1).shape != (COSTMAP_GRID_DIM,):
         raise ValueError(f"costmap_grid must be flat {COSTMAP_GRID_DIM}-D, got shape {grid.shape}")
     return grid.reshape(COSTMAP_GRID_DIM)
+
+
+def _window_goal_path_features(window: dict) -> np.ndarray:
+    features = np.asarray(window.get("goal_path_features", np.zeros(GOAL_PATH_FEATURE_DIM)), dtype=np.float32)
+    if features.reshape(-1).shape != (GOAL_PATH_FEATURE_DIM,):
+        raise ValueError(f"goal_path_features must be flat {GOAL_PATH_FEATURE_DIM}-D, got shape {features.shape}")
+    return features.reshape(GOAL_PATH_FEATURE_DIM)
 
 
 def compute_normalization(windows: list[dict], horizon_steps: int) -> dict[str, np.ndarray]:
@@ -148,6 +156,7 @@ def train_sequence_fdm_v2(
                 "state": w["state"],
                 "controls": w["controls"][:horizon],
                 "costmap_grid": _window_costmap_grid(w),
+                "goal_path_features": _window_goal_path_features(w),
                 "target_states": w["target_states"][:horizon],
                 "target_risk": w["target_risk"][:horizon],
             }
@@ -197,14 +206,15 @@ def train_sequence_fdm_v2(
             train_losses = []
             train_traj_losses = []
             train_risk_losses = []
-            for state, controls, grid, target_states, target_risk in train_loader:
+            for state, controls, grid, goal_path_features, target_states, target_risk in train_loader:
                 state = state.to(torch_device)
                 controls = controls.to(torch_device)
                 grid = grid.to(torch_device)
+                goal_path_features = goal_path_features.to(torch_device)
                 target_states = target_states.to(torch_device)
                 target_risk = target_risk.to(torch_device)
 
-                pred_states, pred_risk_logits = model(state, controls, grid)
+                pred_states, pred_risk_logits = model(state, controls, grid, goal_path_features)
 
                 loss_traj = mse_loss(pred_states, target_states)
                 loss_risk = bce_loss(pred_risk_logits, target_risk)
@@ -224,14 +234,15 @@ def train_sequence_fdm_v2(
             val_traj_losses = []
             val_risk_losses = []
             with torch.no_grad():
-                for state, controls, grid, target_states, target_risk in val_loader:
+                for state, controls, grid, goal_path_features, target_states, target_risk in val_loader:
                     state = state.to(torch_device)
                     controls = controls.to(torch_device)
                     grid = grid.to(torch_device)
+                    goal_path_features = goal_path_features.to(torch_device)
                     target_states = target_states.to(torch_device)
                     target_risk = target_risk.to(torch_device)
 
-                    pred_states, pred_risk_logits = model(state, controls, grid)
+                    pred_states, pred_risk_logits = model(state, controls, grid, goal_path_features)
                     loss_traj = mse_loss(pred_states, target_states)
                     loss_risk = bce_loss(pred_risk_logits, target_risk)
                     loss = w_traj * loss_traj + w_risk * loss_risk
@@ -278,8 +289,9 @@ def train_sequence_fdm_v2(
                     "model_state_dict": model.state_dict(),
                     "horizon_steps": horizon,
                     "hidden_dims": hidden_dims,
-                    "input_dim": 6 + 3 * horizon + COSTMAP_GRID_DIM,
+                    "input_dim": 6 + 3 * horizon + COSTMAP_GRID_DIM + GOAL_PATH_FEATURE_DIM,
                     "target_dim": 6 * horizon + horizon,
+                    "architecture": "dual_branch_costmap_cnn_v1",
                     "phase": phase_idx,
                 }, ckpt_path)
                 best_ckpt_path = ckpt_path
@@ -289,8 +301,9 @@ def train_sequence_fdm_v2(
                         "model_state_dict": model.state_dict(),
                         "horizon_steps": horizon,
                         "hidden_dims": hidden_dims,
-                        "input_dim": 6 + 3 * horizon + COSTMAP_GRID_DIM,
+                        "input_dim": 6 + 3 * horizon + COSTMAP_GRID_DIM + GOAL_PATH_FEATURE_DIM,
                         "target_dim": 6 * horizon + horizon,
+                        "architecture": "dual_branch_costmap_cnn_v1",
                         "phase": phase_idx,
                     }, output_dir / "best_model.pt")
                     torch.save({

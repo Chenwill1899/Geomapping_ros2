@@ -55,6 +55,7 @@ TOP_LEVEL_CONFIG_GROUPS = {
     "global_path",
     "local_goal",
     "final_controller",
+    "motion_policy",
     "command_filter",
     "reactive_avoidance",
     "rviz",

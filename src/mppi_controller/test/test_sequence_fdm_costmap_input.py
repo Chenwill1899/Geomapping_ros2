@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 
 import numpy as np
 import torch
@@ -32,6 +33,22 @@ def test_raw_episode_windows_use_reward_cost_grid_without_feature_layers(tmp_pat
         writer.writeheader()
         for step in range(4):
             writer.writerow({"stamp": float(step), "rel_t": float(step), "linear_x": 1.0, "linear_y": 0.0, "angular_z": 0.0})
+    (episode_dir / "episode.json").write_text(
+        json.dumps({"goal": {"id": "g0", "x": 3.0, "y": 4.0, "yaw": 0.0}}),
+        encoding="utf-8",
+    )
+    with (episode_dir / "tltrajectory.jsonl").open("w", encoding="utf-8") as stream:
+        stream.write(
+            json.dumps(
+                {
+                    "stamp": 0.0,
+                    "rel_t": 0.0,
+                    "length_m": 2.0,
+                    "points": [[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]],
+                }
+            )
+            + "\n"
+        )
 
     np.savez_compressed(
         episode_dir / "local_costmap.npz",
@@ -61,23 +78,31 @@ def test_raw_episode_windows_use_reward_cost_grid_without_feature_layers(tmp_pat
     first = windows[0]
     assert first["costmap_grid"].shape == (81,)
     assert first["terrain_grid"].shape == (81,)
+    assert first["goal_path_features"].shape == (10,)
     np.testing.assert_allclose(first["costmap_grid"], first["terrain_grid"])
     np.testing.assert_allclose(first["controls"], np.asarray([[1.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=np.float32))
     np.testing.assert_allclose(first["target_states"][:, 0], np.asarray([1.0, 2.0], dtype=np.float32))
+    np.testing.assert_allclose(
+        first["goal_path_features"],
+        np.asarray([3.0, 4.0, 5.0, 0.0, 1.0, 0.0, 2.0, 0.0, 2.0, 1.0], dtype=np.float32),
+    )
     assert float(first["costmap_grid"].max()) <= 0.801
     assert float(first["costmap_grid"].max()) > 0.0
 
 
 def test_sequence_fdm_v2_dataset_prefers_costmap_grid_key():
+    from mppi_controller.core.sequence_fdm_v2 import GOAL_PATH_FEATURE_DIM
     from mppi_controller.training.sequence_fdm_v2 import SequenceFdmDataset
 
     costmap_grid = np.arange(81, dtype=np.float32)
+    goal_path_features = np.arange(GOAL_PATH_FEATURE_DIM, dtype=np.float32)
     dataset = SequenceFdmDataset(
         [
             {
                 "state": np.zeros(6, dtype=np.float32),
                 "controls": np.zeros((2, 3), dtype=np.float32),
                 "costmap_grid": costmap_grid,
+                "goal_path_features": goal_path_features,
                 "target_states": np.zeros((2, 6), dtype=np.float32),
                 "target_risk": np.zeros(2, dtype=np.float32),
             }
@@ -85,23 +110,31 @@ def test_sequence_fdm_v2_dataset_prefers_costmap_grid_key():
         horizon_steps=2,
     )
 
-    _state, _controls, grid, _target_states, _target_risk = dataset[0]
+    _state, _controls, grid, features, _target_states, _target_risk = dataset[0]
 
     assert isinstance(grid, torch.Tensor)
     np.testing.assert_allclose(grid.numpy(), costmap_grid)
+    np.testing.assert_allclose(features.numpy(), goal_path_features)
 
 
-def test_sequence_fdm_v2_input_size_matches_costmap_grid():
-    from mppi_controller.core.sequence_fdm_v2 import COSTMAP_GRID_DIM, SequenceFdmMlpV2, build_feature_names_v2
+def test_sequence_fdm_v2_uses_state_control_mlp_costmap_cnn_and_goal_path_features():
+    from mppi_controller.core.sequence_fdm_v2 import (
+        COSTMAP_GRID_DIM,
+        GOAL_PATH_FEATURE_DIM,
+        SequenceFdmMlpV2,
+        build_feature_names_v2,
+    )
 
     model = SequenceFdmMlpV2(horizon_steps=2, hidden_dims=[8])
-    state = torch.zeros((1, 6), dtype=torch.float32)
-    controls = torch.zeros((1, 2, 3), dtype=torch.float32)
-    costmap_grid = torch.zeros((1, COSTMAP_GRID_DIM), dtype=torch.float32)
+    state = torch.zeros((3, 6), dtype=torch.float32)
+    controls = torch.zeros((3, 2, 3), dtype=torch.float32)
+    costmap_grid = torch.zeros(COSTMAP_GRID_DIM, dtype=torch.float32).unsqueeze(0).expand(3, -1)
+    goal_path_features = torch.zeros((3, GOAL_PATH_FEATURE_DIM), dtype=torch.float32)
 
-    states_pred, risk_logits = model(state, controls, costmap_grid)
+    states_pred, risk_logits = model(state, controls, costmap_grid, goal_path_features)
 
-    assert model.net[0].in_features == 6 + 2 * 3 + COSTMAP_GRID_DIM
-    assert len(build_feature_names_v2(2)) == model.net[0].in_features
-    assert states_pred.shape == (1, 2, 6)
-    assert risk_logits.shape == (1, 2)
+    assert hasattr(model, "state_control_encoder")
+    assert hasattr(model, "costmap_encoder")
+    assert len(build_feature_names_v2(2)) == 6 + 2 * 3 + COSTMAP_GRID_DIM + GOAL_PATH_FEATURE_DIM
+    assert states_pred.shape == (3, 2, 6)
+    assert risk_logits.shape == (3, 2)

@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from mppi_controller.core.sequence_fdm_v2 import COSTMAP_GRID_DIM, SequenceFdmMlpV2
+from mppi_controller.core.sequence_fdm_v2 import COSTMAP_GRID_DIM, GOAL_PATH_FEATURE_DIM, SequenceFdmMlpV2
 
 
 class SequenceFdmDynamics:
@@ -56,10 +56,10 @@ class SequenceFdmDynamics:
 
         horizon_steps = checkpoint["horizon_steps"]
         hidden_dims = checkpoint.get("hidden_dims", [256, 256, 256])
-        input_dim = checkpoint.get("input_dim", 6 + 3 * horizon_steps + COSTMAP_GRID_DIM)
+        input_dim = checkpoint.get("input_dim", 6 + 3 * horizon_steps + COSTMAP_GRID_DIM + GOAL_PATH_FEATURE_DIM)
         target_dim = checkpoint.get("target_dim", horizon_steps * 7)
 
-        expected_input_dim = 6 + 3 * horizon_steps + COSTMAP_GRID_DIM
+        expected_input_dim = 6 + 3 * horizon_steps + COSTMAP_GRID_DIM + GOAL_PATH_FEATURE_DIM
         expected_target_dim = horizon_steps * 7
         if input_dim != expected_input_dim:
             raise ValueError(
@@ -98,6 +98,7 @@ class SequenceFdmDynamics:
         state: torch.Tensor,
         controls: torch.Tensor,
         costmap_grid: torch.Tensor,
+        goal_path_features: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Batch inference with torch tensors.
 
@@ -105,6 +106,7 @@ class SequenceFdmDynamics:
             state: (B, 6) or (6,)
             controls: (B, H, 3) or (H, 3)
             costmap_grid: (B, 81) or (81,)
+            goal_path_features: (B, 10) or (10,)
 
         Returns:
             states_pred: (B, H, 6) or (H, 6)
@@ -115,16 +117,27 @@ class SequenceFdmDynamics:
             state = state.unsqueeze(0)
             controls = controls.unsqueeze(0)
             costmap_grid = costmap_grid.unsqueeze(0)
+            if goal_path_features is not None:
+                goal_path_features = goal_path_features.unsqueeze(0)
 
         state = state.to(self.device)
         controls = controls.to(self.device)
         costmap_grid = costmap_grid.to(self.device)
+        if goal_path_features is None:
+            goal_path_features = torch.zeros(
+                state.shape[0],
+                GOAL_PATH_FEATURE_DIM,
+                dtype=torch.float32,
+                device=self.device,
+            )
+        else:
+            goal_path_features = goal_path_features.to(self.device)
 
         state_norm = self._normalize_state(state)
         controls_norm = self._normalize_controls(controls)
 
         with torch.no_grad():
-            out = self.model(state_norm, controls_norm, costmap_grid)
+            out = self.model(state_norm, controls_norm, costmap_grid, goal_path_features)
 
         states_pred_raw, risk_logits = out
         states_pred = self._denormalize_state_targets(states_pred_raw)
@@ -140,6 +153,7 @@ class SequenceFdmDynamics:
         state: np.ndarray,
         controls: np.ndarray,
         costmap_grid: np.ndarray,
+        goal_path_features: np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Single-sample inference with numpy arrays.
 
@@ -147,6 +161,7 @@ class SequenceFdmDynamics:
             state: (6,)
             controls: (H, 3)
             costmap_grid: (81,)
+            goal_path_features: (10,)
 
         Returns:
             states_pred: (H, 6)
@@ -155,8 +170,9 @@ class SequenceFdmDynamics:
         state_t = torch.from_numpy(state).float()
         controls_t = torch.from_numpy(controls).float()
         costmap_t = torch.from_numpy(costmap_grid).float()
+        goal_path_t = None if goal_path_features is None else torch.from_numpy(goal_path_features).float()
 
-        states_pred, risk_logits = self.predict_torch(state_t, controls_t, costmap_t)
+        states_pred, risk_logits = self.predict_torch(state_t, controls_t, costmap_t, goal_path_t)
         return states_pred.cpu().numpy(), risk_logits.cpu().numpy()
 
     def predict_batch(
@@ -164,6 +180,7 @@ class SequenceFdmDynamics:
         states: np.ndarray,
         controls: np.ndarray,
         costmaps: np.ndarray,
+        goal_path_features: np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Batch inference with numpy arrays.
 
@@ -171,6 +188,7 @@ class SequenceFdmDynamics:
             states: (B, 6)
             controls: (B, H, 3)
             costmaps: (B, 81)
+            goal_path_features: (B, 10)
 
         Returns:
             states_pred: (B, H, 6)
@@ -179,6 +197,7 @@ class SequenceFdmDynamics:
         states_t = torch.from_numpy(states).float()
         controls_t = torch.from_numpy(controls).float()
         costmaps_t = torch.from_numpy(costmaps).float()
+        goal_path_t = None if goal_path_features is None else torch.from_numpy(goal_path_features).float()
 
-        states_pred, risk_logits = self.predict_torch(states_t, controls_t, costmaps_t)
+        states_pred, risk_logits = self.predict_torch(states_t, controls_t, costmaps_t, goal_path_t)
         return states_pred.cpu().numpy(), risk_logits.cpu().numpy()

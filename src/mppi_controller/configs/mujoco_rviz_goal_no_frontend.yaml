@@ -88,8 +88,8 @@ motion_policy:
   allow_reverse: false
   rotate_then_translate:
     enabled: true
-    enter_angle_deg: 120.0
-    exit_angle_deg: 60.0
+    enter_angle_deg: 100.0
+    exit_angle_deg: 45.0
 
 command_filter:
   enabled: true

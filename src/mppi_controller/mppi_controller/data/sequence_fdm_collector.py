@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import tempfile
 from pathlib import Path
 
@@ -306,6 +307,10 @@ def build_sequence_fdm_windows_from_raw_episode(
         )
     odom = _read_numeric_csv(episode_dir / "odom.csv")
     cmd = _read_numeric_csv(episode_dir / "cmd.csv")
+    goal = _read_episode_goal(episode_dir)
+    path_records = _read_path_records(episode_dir / "tltrajectory.jsonl")
+    if not path_records:
+        path_records = _read_path_records(episode_dir / "frontend_path.jsonl")
     localmap = np.load(episode_dir / "local_costmap.npz")
     try:
         stamps = np.asarray(odom["stamp"], dtype=np.float64)
@@ -356,6 +361,8 @@ def build_sequence_fdm_windows_from_raw_episode(
             max_value=float(costmap_max_value),
         )
         target_states = states[start + 1 : start + 1 + horizon]
+        path_points, path_length = _path_at_stamp(path_records, stamps[start])
+        goal_path_features = _goal_path_features(state_t, goal, path_points, path_length)
         target_risk = _target_risk_from_costmaps(
             stamps[start + 1 : start + 1 + horizon],
             target_states,
@@ -376,6 +383,7 @@ def build_sequence_fdm_windows_from_raw_episode(
                 "costmap_grid": costmap_grid.astype(np.float32, copy=False),
                 # Kept as a compatibility alias for the existing V2 trainer.
                 "terrain_grid": costmap_grid.astype(np.float32, copy=False),
+                "goal_path_features": goal_path_features.astype(np.float32, copy=False),
                 "target_states": target_states.astype(np.float32, copy=False),
                 "target_risk": target_risk.astype(np.float32, copy=False),
                 "episode_id": str(episode_dir),
@@ -422,6 +430,108 @@ def _target_risk_from_costmaps(
         )
         risks[idx] = 1.0 if float(sampled[0]) >= threshold else 0.0
     return risks
+
+
+def _read_episode_goal(episode_dir: Path) -> np.ndarray:
+    episode_path = episode_dir / "episode.json"
+    if not episode_path.exists():
+        return np.zeros(3, dtype=np.float32)
+    data = json.loads(episode_path.read_text(encoding="utf-8"))
+    goal = data.get("goal", {})
+    return np.asarray(
+        [
+            float(goal.get("x", 0.0)),
+            float(goal.get("y", 0.0)),
+            float(goal.get("yaw", 0.0)),
+        ],
+        dtype=np.float32,
+    )
+
+
+def _read_path_records(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    records: list[dict] = []
+    with path.open("r", encoding="utf-8") as stream:
+        for line in stream:
+            line = line.strip()
+            if not line:
+                continue
+            record = json.loads(line)
+            if "stamp" in record and isinstance(record.get("points"), list):
+                records.append(record)
+    return sorted(records, key=lambda item: float(item["stamp"]))
+
+
+def _path_at_stamp(records: list[dict], stamp: float) -> tuple[np.ndarray, float]:
+    if not records:
+        return np.empty((0, 2), dtype=np.float32), 0.0
+    stamps = np.asarray([float(record["stamp"]) for record in records], dtype=np.float64)
+    index = _nearest_index(stamps, float(stamp))
+    if index is None:
+        return np.empty((0, 2), dtype=np.float32), 0.0
+    record = records[index]
+    points = np.asarray(record.get("points", []), dtype=np.float32).reshape(-1, 2)
+    length = float(record.get("length_m", 0.0))
+    if length <= 0.0 and len(points) >= 2:
+        length = float(np.sum(np.linalg.norm(points[1:] - points[:-1], axis=1)))
+    return points, length
+
+
+def _goal_path_features(
+    state: np.ndarray,
+    goal: np.ndarray,
+    path_points: np.ndarray,
+    path_length: float,
+) -> np.ndarray:
+    state = np.asarray(state, dtype=np.float32).reshape(6)
+    goal = np.asarray(goal, dtype=np.float32).reshape(3)
+    rel_goal = _world_to_body_delta(state, goal[:2])
+    goal_distance = float(np.linalg.norm(goal[:2] - state[:2]))
+    goal_yaw_error = _angle_diff(float(goal[2]), float(state[2]))
+
+    path_available = 1.0 if path_points.shape[0] >= 2 else 0.0
+    if path_available:
+        lookahead = _world_to_body_delta(state, path_points[min(1, path_points.shape[0] - 1)])
+        path_end = _world_to_body_delta(state, path_points[-1])
+    else:
+        lookahead = np.zeros(2, dtype=np.float32)
+        path_end = np.zeros(2, dtype=np.float32)
+        path_length = 0.0
+    return np.asarray(
+        [
+            rel_goal[0],
+            rel_goal[1],
+            goal_distance,
+            goal_yaw_error,
+            lookahead[0],
+            lookahead[1],
+            path_end[0],
+            path_end[1],
+            float(path_length),
+            path_available,
+        ],
+        dtype=np.float32,
+    )
+
+
+def _world_to_body_delta(state: np.ndarray, point_xy: np.ndarray) -> np.ndarray:
+    dx = float(point_xy[0]) - float(state[0])
+    dy = float(point_xy[1]) - float(state[1])
+    yaw = float(state[2])
+    cos_yaw = float(np.cos(yaw))
+    sin_yaw = float(np.sin(yaw))
+    return np.asarray(
+        [
+            cos_yaw * dx + sin_yaw * dy,
+            -sin_yaw * dx + cos_yaw * dy,
+        ],
+        dtype=np.float32,
+    )
+
+
+def _angle_diff(a: float, b: float) -> float:
+    return float((float(a) - float(b) + np.pi) % (2.0 * np.pi) - np.pi)
 
 
 def _read_numeric_csv(path: Path) -> dict[str, np.ndarray]:
