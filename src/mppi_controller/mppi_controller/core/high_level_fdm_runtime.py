@@ -92,5 +92,9 @@ class HighLevelFdmRuntime:
         history = history.to(device=self.device, dtype=torch.float32, non_blocking=True)
         local_map = local_map.to(device=self.device, dtype=torch.float32, non_blocking=True)
         actions = actions.to(device=self.device, dtype=torch.float32, non_blocking=True)
-        pose, risk, applied_twist = self.model(history, local_map, actions)
+        # The exported H-FDM TorchScript GRU can hang on its second CUDA call
+        # with optimized execution enabled. Keep this disabled for the model
+        # call only so the controller loop can reuse the runtime safely.
+        with torch.jit.optimized_execution(False):
+            pose, risk, applied_twist = self.model(history, local_map, actions)
         return pose.to(torch.float32), risk.to(torch.float32), applied_twist.to(torch.float32)

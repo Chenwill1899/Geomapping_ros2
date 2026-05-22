@@ -114,14 +114,14 @@ motion_policy:
     enter_angle_deg: 100.0
     exit_angle_deg: 45.0
 command_filter:
-  enabled: true
-  alpha: 0.34
+  enabled: false
+  alpha: 0.0
   max_ax: 1.0
   max_ay: 0.3
   max_awz: 0.9
   lateral_scale: 1.0
-  lateral_deadband: 0.03
-  yaw_deadband: 0.03
+  lateral_deadband: 0.0
+  yaw_deadband: 0.0
 reactive_avoidance:
   enabled: false
   include_safety_dist: false
@@ -179,38 +179,38 @@ mppi:
   - 0.0
   - 0.0
   std_normal:
-  - 0.42
-  - 0.18
-  - 0.24
+  - 0.55
+  - 0.22
+  - 0.28
   num_trajectories: 896
   draw_num_traj: 20
   obstacle_weight: 0.0
   obstacle_collision_weight: 0.0
   obstacle_soft_weight: 0.0
   obstacle_influence_dist: 0.0
-  control_weight: 0.015
-  smooth_weight: 2.4
-  accel_weight: 0.45
-  lateral_weight: 0.35
-  yaw_rate_weight: 0.38
-  jerk_weight: 0.85
+  control_weight: 0.0
+  smooth_weight: 0.0
+  accel_weight: 0.0
+  lateral_weight: 0.0
+  yaw_rate_weight: 0.0
+  jerk_weight: 0.0
   update_smoothing_alpha:
-  - 0.34
-  - 0.84
-  - 0.82
+  - 0.0
+  - 0.0
+  - 0.0
   goal_change_reset_distance: 0.75
   goal_change_reset_yaw: 1.0
-  goal_progress_weight: 44.0
-  heading_to_goal_weight: 0.2
+  goal_progress_weight: 72.0
+  heading_to_goal_weight: 0.15
   heading_to_goal_min_distance: 0.6
-  path_tracking_weight: 3.0
+  path_tracking_weight: 2.0
   path_tracking_tolerance: 0.45
-  path_progress_weight: 0.8
+  path_progress_weight: 2.0
   backend: torch
   device: cuda
   terrain_risk_weight: 0.0
-  learned_risk_weight: 10.0
-  learned_risk_threshold: 0.45
+  learned_risk_weight: 4.0
+  learned_risk_threshold: 0.6
   learned_risk_power: 2.0
 default_controller: learned_hfdm_h25
 controllers:
@@ -224,8 +224,8 @@ controllers:
     model_file: fdm_ts.pt
     metadata_file: fdm_metadata.json
     device: cuda
-    risk_weight: 10.0
-    risk_threshold: 0.45
+    risk_weight: 4.0
+    risk_threshold: 0.6
     risk_power: 2.0
     profile_enabled: false
 visualization:

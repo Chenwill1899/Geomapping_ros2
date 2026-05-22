@@ -88,3 +88,27 @@ def test_navigation_trial_uses_sparse_obstacle_override_by_default():
     assert obstacle_cfg["range"]["y_max"] - obstacle_cfg["range"]["y_min"] > 10.0
     assert "obstacle_scout_sparse.yaml" in script_text
     assert "default=str(DEFAULT_OBSTACLE_CONFIG)" in script_text
+
+
+def test_hfdm_profile_removes_nominal_motion_regularizers():
+    profile = _load_yaml("src/mppi_controller/configs/mujoco_rviz_goal_hfdm_h25.yaml")
+    mppi = profile["mppi"]
+
+    assert profile["default_controller"] == "learned_hfdm_h25"
+    assert mppi["learned_risk_weight"] > 0.0
+    assert mppi["terrain_risk_weight"] == 0.0
+    assert profile["local_costmap"]["cost_weight"] == 0.0
+    for key in (
+        "control_weight",
+        "smooth_weight",
+        "accel_weight",
+        "lateral_weight",
+        "yaw_rate_weight",
+        "jerk_weight",
+    ):
+        assert mppi[key] == 0.0
+    assert mppi["update_smoothing_alpha"] == [0.0, 0.0, 0.0]
+    assert profile["command_filter"]["enabled"] is False
+    assert profile["command_filter"]["alpha"] == 0.0
+    assert profile["command_filter"]["lateral_deadband"] == 0.0
+    assert profile["command_filter"]["yaw_deadband"] == 0.0
