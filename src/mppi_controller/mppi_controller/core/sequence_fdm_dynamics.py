@@ -23,11 +23,15 @@ class SequenceFdmDynamics:
         target_mean: np.ndarray,
         target_std: np.ndarray,
         device: str = "cpu",
+        checkpoint_path: Path | None = None,
+        normalization_path: Path | None = None,
     ) -> None:
         self.model = model.to(device)
         self.model.eval()
         self.device = device
         self.horizon_steps = model.horizon_steps
+        self.checkpoint_path = Path(checkpoint_path) if checkpoint_path is not None else None
+        self.normalization_path = Path(normalization_path) if normalization_path is not None else None
 
         self.state_mean = torch.from_numpy(state_mean).to(device)
         self.state_std = torch.from_numpy(state_std).to(device)
@@ -41,10 +45,16 @@ class SequenceFdmDynamics:
         self.state_target_std = target_std[:state_target_len].view(self.horizon_steps, 6)
 
     @classmethod
-    def from_artifacts(cls, model_dir: Path, device: str = "cpu") -> "SequenceFdmDynamics":
+    def from_artifacts(
+        cls,
+        model_dir: Path,
+        device: str = "cpu",
+        checkpoint: str | Path = "best_model.pt",
+        normalization: str | Path = "normalization.npz",
+    ) -> "SequenceFdmDynamics":
         model_dir = Path(model_dir)
-        ckpt_path = model_dir / "best_model.pt"
-        norm_path = model_dir / "normalization.npz"
+        ckpt_path = _resolve_artifact_path(model_dir, checkpoint)
+        norm_path = _resolve_artifact_path(model_dir, normalization)
 
         if not ckpt_path.exists():
             raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
@@ -82,6 +92,8 @@ class SequenceFdmDynamics:
             target_mean=norm["target_mean"].astype(np.float32),
             target_std=norm["target_std"].astype(np.float32),
             device=device,
+            checkpoint_path=ckpt_path,
+            normalization_path=norm_path,
         )
 
     def _normalize_state(self, state: torch.Tensor) -> torch.Tensor:
@@ -201,3 +213,10 @@ class SequenceFdmDynamics:
 
         states_pred, risk_logits = self.predict_torch(states_t, controls_t, costmaps_t, goal_path_t)
         return states_pred.cpu().numpy(), risk_logits.cpu().numpy()
+
+
+def _resolve_artifact_path(model_dir: Path, artifact_path: str | Path) -> Path:
+    path = Path(artifact_path)
+    if path.is_absolute():
+        return path
+    return model_dir / path

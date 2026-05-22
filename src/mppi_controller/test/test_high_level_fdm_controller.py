@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 
 import numpy as np
 import pytest
@@ -128,6 +129,50 @@ def test_high_level_fdm_runtime_loads_torchscript_and_metadata(tmp_path):
     assert pose.shape == (2, 3, 4)
     assert risk.shape == (2, 3, 6)
     assert applied.shape == (2, 3, 3)
+
+
+def test_high_level_fdm_predict_disables_jit_optimized_execution(monkeypatch):
+    from mppi_controller.core import high_level_fdm_runtime as runtime_module
+    from mppi_controller.core.high_level_fdm_runtime import HighLevelFdmMetadata, HighLevelFdmRuntime
+
+    calls = []
+    active = []
+
+    @contextmanager
+    def fake_optimized_execution(enabled):
+        calls.append(enabled)
+        active.append(enabled)
+        try:
+            yield
+        finally:
+            active.pop()
+
+    class GuardedHfdm(_FakeHfdm):
+        def forward(self, history, local_map, actions):
+            assert active == [False]
+            return super().forward(history, local_map, actions)
+
+    monkeypatch.setattr(runtime_module.torch.jit, "optimized_execution", fake_optimized_execution)
+    runtime = HighLevelFdmRuntime(
+        GuardedHfdm(),
+        HighLevelFdmMetadata(
+            horizon=3,
+            history_len=10,
+            map_size=64,
+            map_channels=1,
+            dt=0.1,
+            risk_names=("collision", "any"),
+        ),
+        device="cpu",
+    )
+
+    runtime.predict(
+        torch.zeros(2, 10, 10),
+        torch.zeros(2, 1, 64, 64),
+        torch.zeros(2, 3, 3),
+    )
+
+    assert calls == [False]
 
 
 def test_robot_frame_hfdm_pose_converts_to_world_frame(tmp_path):
