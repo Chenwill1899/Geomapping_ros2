@@ -549,6 +549,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--controller", default="nominal_cuda", help="Controller name from the profile.")
     parser.add_argument("--headless", action=argparse.BooleanOptionalAction, default=True, help="Run ausim2 headless.")
     parser.add_argument("--launch-rviz", action=argparse.BooleanOptionalAction, default=False, help="Launch RViz.")
+    parser.add_argument(
+        "--use-frontend",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Launch traversability_path and publish /tltrajectory.",
+    )
     parser.add_argument("--goal-tolerance-m", type=float, default=0.3, help="Success tolerance for outer packaging.")
     parser.add_argument("--reach-dwell-s", type=float, default=0.5, help="Continuous in-tolerance time before stopping.")
     parser.add_argument("--timeout-s", type=float, default=180.0, help="Hard timeout for the whole trial.")
@@ -576,7 +582,15 @@ def main(argv: list[str] | None = None) -> int:
     sampling_rate = float(config["simulation"]["sampling_rate"])
     max_steps = max(1, int(math.ceil(float(args.timeout_s) * sampling_rate)))
 
-    tag = args.tag or f"x{args.x:g}_y{args.y:g}_frontend"
+    launch_variant = "frontend" if args.use_frontend else "no_frontend"
+    adapter_launch = (
+        "ausim_scout_mppi_frontend.launch.py"
+        if args.use_frontend
+        else "ausim_scout_mppi_no_frontend.launch.py"
+    )
+    adapter_label = f"adapter[{launch_variant}]"
+
+    tag = args.tag or f"x{args.x:g}_y{args.y:g}_{launch_variant}"
     output_dir = RESULTS_ROOT / f"{_timestamp()}_{_safe_tag(tag)}"
     native_run_dir = output_dir / "native_run"
     output_dir.mkdir(parents=True, exist_ok=False)
@@ -593,7 +607,7 @@ def main(argv: list[str] | None = None) -> int:
         "goal": {"x": float(args.x), "y": float(args.y), "yaw": None if args.yaw is None else float(args.yaw)},
         "goal_tolerance_m": float(args.goal_tolerance_m),
         "timeout_s": float(args.timeout_s),
-        "launch_variant": "frontend",
+        "launch_variant": launch_variant,
         "mppi_profile": str(profile_path),
         "controller": str(args.controller),
         "headless": bool(args.headless),
@@ -617,7 +631,7 @@ def main(argv: list[str] | None = None) -> int:
         env["AUSIM_DYNAMIC_OBSTACLE_CONFIG_OVERRIDE"] = str(prepared_obstacle_config)
     ausim_cmd = f"{AUSIM_ROOT / 'em_run.sh'} {'--headless' if args.headless else ''}".strip()
     adapter_cmd = (
-        "ros2 launch ausim_geomapping_adapter ausim_scout_mppi_frontend.launch.py "
+        f"ros2 launch ausim_geomapping_adapter {adapter_launch} "
         f"launch_rviz:={'true' if args.launch_rviz else 'false'} "
         "launch_mppi:=false "
         f"mppi_profile:={profile_path} "
@@ -641,7 +655,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         ausim_proc, ausim_thread = _start_process(label="ausim2", command=ausim_cmd, log_path=log_path, env=env)
-        adapter_proc, adapter_thread = _start_process(label="adapter[frontend]", command=adapter_cmd, log_path=log_path, env=env)
+        adapter_proc, adapter_thread = _start_process(label=adapter_label, command=adapter_cmd, log_path=log_path, env=env)
         controller_proc, controller_thread = _start_process(label="mppi", command=controller_cmd, log_path=log_path, env=env)
 
         monitor = TrialMonitor(goal_topic=args.goal_topic, odom_topic=args.odom_topic)
@@ -735,7 +749,7 @@ def main(argv: list[str] | None = None) -> int:
         goal_y=float(args.y),
         goal_tolerance_m=float(args.goal_tolerance_m),
         timeout_s=float(args.timeout_s),
-        launch_variant="frontend",
+        launch_variant=launch_variant,
         mppi_profile=str(profile_path),
         output_dir=output_dir,
         started=started,
