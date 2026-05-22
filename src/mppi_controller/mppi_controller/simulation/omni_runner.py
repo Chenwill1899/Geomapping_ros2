@@ -13,6 +13,7 @@ import pandas as pd
 import yaml
 
 from mppi_controller.controllers.mppi_omni_numpy import MppiOmniNumpy
+from mppi_controller.controllers.mppi_omni_high_level_fdm_torch import MppiOmniHighLevelFdmTorch
 from mppi_controller.controllers.mppi_omni_sequence_fdm_torch import MppiOmniSequenceFdmTorch
 from mppi_controller.controllers.mppi_omni_torch import MppiOmniTorch
 from mppi_controller.core.omni_b2 import OmniB2
@@ -42,8 +43,10 @@ def create_omni_controller(config: dict, seed: int = 123) -> object:
         if backend in {"cuda", "torch"}:
             if fdm_mode in {"sequence", "sequence_fdm"}:
                 return MppiOmniSequenceFdmTorch.from_config(config, seed=seed)
-            raise ValueError(f"Only sequence FDM is supported; got fdm.mode={fdm_mode!r}")
-        raise ValueError(f"Unsupported sequence FDM MPPI backend: {backend}")
+            if fdm_mode in {"high_level_fdm", "hfdm"}:
+                return MppiOmniHighLevelFdmTorch.from_config(config, seed=seed)
+            raise ValueError(f"Only sequence FDM/high_level_fdm modes are supported; got fdm.mode={fdm_mode!r}")
+        raise ValueError(f"Unsupported sequence FDM/high_level_fdm MPPI backend: {backend}")
     if backend == "torch":
         return MppiOmniTorch.from_config(config, seed=seed)
     if backend == "cuda":

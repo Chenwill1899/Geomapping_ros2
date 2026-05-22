@@ -31,6 +31,7 @@ class MppiOmniTorch(MppiOmniNumpy):
         if self.torch_device.type == "cuda" and not torch.cuda.is_available():
             raise RuntimeError("Torch MPPI backend requested CUDA, but torch.cuda.is_available() is false")
         self.max_control_t = torch.as_tensor(self.max_control, dtype=torch.float32, device=self.torch_device)
+        self.min_control_t = torch.as_tensor(self.min_control, dtype=torch.float32, device=self.torch_device)
         self.max_accel_t = torch.as_tensor(self.max_accel, dtype=torch.float32, device=self.torch_device)
         self.noise_std_t = torch.as_tensor(self.noise_std, dtype=torch.float32, device=self.torch_device)
         self.previous_control_t = torch.zeros(3, dtype=torch.float32, device=self.torch_device)
@@ -142,7 +143,7 @@ class MppiOmniTorch(MppiOmniNumpy):
             device=self.torch_device,
             generator=self.generator,
         ) * self.noise_std_t
-        candidates = torch.clamp(nominal.unsqueeze(0) + noise, -self.max_control_t, self.max_control_t)
+        candidates = torch.clamp(nominal.unsqueeze(0) + noise, self.min_control_t, self.max_control_t)
         self._profile_stop("sample_candidates_ms", profile_start)
         costs = self._trajectory_cost_batch_torch(state, candidates, goal, obstacles, path, costmap)
         profile_start = self._profile_start()
@@ -163,7 +164,7 @@ class MppiOmniTorch(MppiOmniNumpy):
             )
             nominal = alpha * previous_nominal + (1.0 - alpha) * nominal
         self._has_nominal_update = True
-        nominal = torch.clamp(nominal, -self.max_control_t, self.max_control_t)
+        nominal = torch.clamp(nominal, self.min_control_t, self.max_control_t)
         self._profile_stop("update_distribution_ms", profile_start)
         profile_start = self._profile_start()
         self.nominal_u = nominal.detach().cpu().numpy().astype(np.float32)
@@ -189,7 +190,7 @@ class MppiOmniTorch(MppiOmniNumpy):
         costmap: dict | None = None,
     ) -> np.ndarray:
         controls_t = torch.as_tensor(np.asarray(controls, dtype=np.float32), device=self.torch_device)
-        controls_t = torch.clamp(controls_t, -self.max_control_t, self.max_control_t)
+        controls_t = torch.clamp(controls_t, self.min_control_t, self.max_control_t)
         goal_t = torch.as_tensor(np.asarray(goal, dtype=np.float32), device=self.torch_device)
         obstacles_t = torch.as_tensor(np.asarray(obstacles, dtype=np.float32).reshape(-1, 7), device=self.torch_device)
         path_t = torch.as_tensor(np.asarray(path if path is not None else [], dtype=np.float32).reshape(-1, 2), device=self.torch_device)
@@ -220,7 +221,7 @@ class MppiOmniTorch(MppiOmniNumpy):
         path: torch.Tensor | None = None,
         costmap: dict | None = None,
     ) -> torch.Tensor:
-        controls = torch.clamp(controls, -self.max_control_t, self.max_control_t)
+        controls = torch.clamp(controls, self.min_control_t, self.max_control_t)
         profile_start = self._profile_start()
         states, real_controls = self._rollout_batch_torch(initial_state, controls)
         self._profile_stop("rollout_total_ms", profile_start)
@@ -282,7 +283,7 @@ class MppiOmniTorch(MppiOmniNumpy):
         initial_state: np.ndarray,
         controls: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        controls = torch.clamp(controls.to(torch.float32), -self.max_control_t, self.max_control_t)
+        controls = torch.clamp(controls.to(torch.float32), self.min_control_t, self.max_control_t)
         num_samples, horizon_steps, _ = controls.shape
         states = torch.zeros((num_samples, horizon_steps + 1, 6), dtype=torch.float32, device=self.torch_device)
         states[:, 0, :] = torch.as_tensor(np.asarray(initial_state, dtype=np.float32), device=self.torch_device)
@@ -296,11 +297,11 @@ class MppiOmniTorch(MppiOmniNumpy):
                 profile_start = self._profile_start()
                 lagged = self.velocity_lag_beta * prev_real + (1.0 - self.velocity_lag_beta) * command
                 delta = torch.clamp(lagged - prev_real, -max_delta, max_delta)
-                response_command = torch.clamp(prev_real + delta, -self.max_control_t, self.max_control_t)
+                response_command = torch.clamp(prev_real + delta, self.min_control_t, self.max_control_t)
                 self._profile_stop("response_update_ms", profile_start)
                 residual = self._predict_residual_torch(prev, response_command)
                 profile_start = self._profile_start()
-                control = torch.clamp(response_command + residual, -self.max_control_t, self.max_control_t)
+                control = torch.clamp(response_command + residual, self.min_control_t, self.max_control_t)
                 real_controls[:, step, :] = control
                 theta = prev[:, 2]
                 cos_theta = torch.cos(theta)

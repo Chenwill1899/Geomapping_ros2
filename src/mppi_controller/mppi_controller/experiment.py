@@ -60,8 +60,19 @@ TOP_LEVEL_CONFIG_GROUPS = {
     "reactive_avoidance",
     "rviz",
     "scenario",
+    "fdm",
 }
-LEARNED_METHODS = {"learned", "learned_fdm", "fdm", "sequence", "sequence_fdm", "learned_sequence"}
+LEARNED_METHODS = {
+    "learned",
+    "learned_fdm",
+    "fdm",
+    "hfdm",
+    "high_level_fdm",
+    "learned_hfdm",
+    "sequence",
+    "sequence_fdm",
+    "learned_sequence",
+}
 DEFAULT_MODEL_SEARCH_ROOT = Path("results/fdm_baselines")
 ARTIFACT_FILES = {
     "summary_json": "summary.json",
@@ -223,6 +234,16 @@ def validate_learned_fdm_artifacts(config: Mapping[str, Any], metadata: Mapping[
     if not bool(fdm.get("enabled", False)):
         return
     model_dir = Path(str(fdm.get("model_dir", "")))
+    mode = str(fdm.get("mode", "sequence")).lower()
+    if mode in {"high_level_fdm", "hfdm"}:
+        model_file = _resolve_artifact(model_dir, fdm.get("model_file", "fdm_ts.pt"))
+        metadata_file = _resolve_artifact(model_dir, fdm.get("metadata_file", "fdm_metadata.json"))
+        missing = [path for path in (model_file, metadata_file) if not path.exists()]
+        if not missing:
+            return
+        raise ExperimentConfigError(
+            _missing_fdm_artifact_message(missing, model_dir, model_file, metadata_file, metadata)
+        )
     checkpoint = _resolve_artifact(model_dir, fdm.get("checkpoint", "best_model.pt"))
     normalization = _resolve_artifact(model_dir, fdm.get("normalization", "normalization.npz"))
     missing = [path for path in (checkpoint, normalization) if not path.exists()]
@@ -336,7 +357,10 @@ def _apply_controller(
         learned = controller.get("learned_fdm", controller.get("fdm", {}))
         if learned:
             _deep_update(fdm, _mapping(learned, "controller.learned_fdm"))
-        fdm.setdefault("mode", "sequence")
+        if method in {"hfdm", "high_level_fdm", "learned_hfdm"}:
+            fdm.setdefault("mode", "high_level_fdm")
+        else:
+            fdm.setdefault("mode", "sequence")
         if model_dir is not None:
             fdm["model_dir"] = str(model_dir)
         if checkpoint is not None:
