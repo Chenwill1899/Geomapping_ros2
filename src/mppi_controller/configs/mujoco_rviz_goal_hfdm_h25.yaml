@@ -1,0 +1,248 @@
+# MuJoCo closed-loop Geomapping profile using high_level_fdm H25 TorchScript rollout.
+# Goal is set via RViz 2D Goal Pose (/move_base_simple/goal).
+
+experiment:
+  name: mujoco_scout_hfdm_h25
+  base_config: mujoco_external_path_base.yaml
+  seed: 123
+  output_root: results/mujoco_scout
+  run_name: '{experiment}_{controller}_seed{seed}'
+  timestamp_suffix: true
+  overwrite: false
+mujoco:
+  drive_mode: omni_freejoint
+  odom_topic: /scout1/odom
+  cmd_vel_topic: /joy/cmd_vel
+  odom_timeout: 1.0
+  startup_odom_timeout: 0.0
+simulation:
+  disable_goal_termination: false
+  max_steps: 1200
+  minimum_distance: 0.5
+external_path:
+  enabled: true
+  path_topic: /tltrajectory
+  message_type: traversability_mapping/Polynome
+  frame_id: map
+  stale_timeout: 3.0
+  stop_on_stale: false
+  lookahead: 3.0
+  max_points: 64
+  yaw_mode: line_of_sight
+  smoothing_iterations: 1
+  smoothing_alpha: 0.2
+  temporal_alpha: 0.3
+  temporal_endpoint_tolerance: 1.0
+  min_remaining_length: 1.5
+  min_goal_distance: 1.0
+  final_goal_bypass_distance: 2.0
+  min_forward_projection: 2.4
+  stagnation_recovery:
+    enabled: true
+    patience_steps: 45
+    min_progress: 0.15
+    recovery_steps: 140
+goal_topic:
+  enabled: true
+  required: true
+  topic: /move_base_simple/goal
+global_path:
+  enabled: true
+  resolution: 0.2
+  padding: 2.0
+  lookahead: 3.2
+  obstacle_inflation: 0.15
+  replan_steps: 15
+  replan_distance: 0.8
+  simplify_stride: 3
+  smoothing_iterations: 1
+  smoothing_alpha: 0.15
+  smoothing_sample_resolution: 0.1
+  cost_max_points: 64
+  yaw_mode: line_of_sight
+local_goal:
+  enabled: false
+final_controller:
+  enabled: true
+  disable_when_local_costmap: false
+  trigger_distance: 1.5
+  rotate_threshold: 0.45
+  xy_gain: 0.45
+  lateral_gain: 0.1
+  max_vy: 0.1
+  heading_gain: 0.75
+  final_yaw_gain: 0.2
+  wz_gain: 1.1
+local_costmap:
+  enabled: true
+  required: true
+  topic: /msg_local_reward
+  layer: reward_cost
+  stale_timeout: 1.0
+  cost_weight: 0.0
+  cost_power: 2.0
+  unknown_cost: 100.0
+  max_cost: 100.0
+  unknown_clear_radius: 1.0
+  unknown_clear_value: 0.0
+  ground_artifact_filter:
+    enabled: true
+    min_cost: 20.0
+    max_height_abs: 0.08
+    max_roughness: 0.08
+    max_slope: 0.08
+    occupied_threshold: 50
+    clear_value: 0.0
+  footprint:
+    enabled: true
+    radius: 0.55
+    safety_margin: 0.15
+    sample_count: 32
+dynamic_obstacles:
+  enabled: true
+  required: false
+  topic: /dyn_obstacle
+  stale_timeout: 0.75
+  safety_padding: 0.05
+  box_safety_padding: 0.06
+  max_obstacles: 64
+  dedupe_distance: 0.15
+motion_policy:
+  allow_reverse: false
+  rotate_then_translate:
+    enabled: true
+    enter_angle_deg: 100.0
+    exit_angle_deg: 45.0
+command_filter:
+  enabled: true
+  alpha: 0.34
+  max_ax: 1.0
+  max_ay: 0.3
+  max_awz: 0.9
+  lateral_scale: 1.0
+  lateral_deadband: 0.03
+  yaw_deadband: 0.03
+reactive_avoidance:
+  enabled: false
+  include_safety_dist: false
+  influence_dist: 0.08
+  brake_gain: 0.25
+  lateral_gain: 0.04
+  max_lateral_adjust: 0.05
+  min_speed_scale: 0.7
+scenario:
+  world_mode: nominal
+  initial_state:
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  minimum_distance: 0.5
+  max_steps: 1200
+  obstacles:
+    static_enabled: true
+    virtual: []
+  terrain:
+    enabled: true
+    friction_base: 0.72
+    slope_scale: 0.1
+    roughness_scale: 0.25
+    friction_slope_scale: 0.18
+    friction_roughness_scale: 0.1
+    goal_relief:
+      enabled: true
+      center: auto
+      sigma:
+      - 2.0
+      - 1.2
+      strength: 0.75
+      floor: 0.25
+robot:
+  max_vx: 1.0
+  min_vx: 0.0
+  max_vy: 0.3
+  max_wz: 1.2
+  max_ax: 1.0
+  max_ay: 0.35
+  max_awz: 1.2
+  velocity_lag_beta: 0.3
+  radius: 0.55
+  safety_dist: 0.2
+mppi:
+  weights:
+  - 2.4
+  - 2.4
+  - 0.35
+  - 0.0
+  - 0.0
+  - 0.0
+  std_normal:
+  - 0.42
+  - 0.18
+  - 0.24
+  num_trajectories: 896
+  draw_num_traj: 20
+  obstacle_weight: 0.0
+  obstacle_collision_weight: 0.0
+  obstacle_soft_weight: 0.0
+  obstacle_influence_dist: 0.0
+  control_weight: 0.015
+  smooth_weight: 2.4
+  accel_weight: 0.45
+  lateral_weight: 0.35
+  yaw_rate_weight: 0.38
+  jerk_weight: 0.85
+  update_smoothing_alpha:
+  - 0.34
+  - 0.84
+  - 0.82
+  goal_change_reset_distance: 0.75
+  goal_change_reset_yaw: 1.0
+  goal_progress_weight: 44.0
+  heading_to_goal_weight: 0.2
+  heading_to_goal_min_distance: 0.6
+  path_tracking_weight: 3.0
+  path_tracking_tolerance: 0.45
+  path_progress_weight: 0.8
+  backend: torch
+  device: cuda
+  terrain_risk_weight: 0.0
+  learned_risk_weight: 10.0
+  learned_risk_threshold: 0.45
+  learned_risk_power: 2.0
+default_controller: learned_hfdm_h25
+controllers:
+- name: learned_hfdm_h25
+  method: high_level_fdm
+  backend: torch
+  fdm:
+    enabled: true
+    mode: high_level_fdm
+    model_dir: /home/mexxiie/prj/high_level_fdm/runs/geomapping_data1_h25/export
+    model_file: fdm_ts.pt
+    metadata_file: fdm_metadata.json
+    device: cuda
+    risk_weight: 10.0
+    risk_threshold: 0.45
+    risk_power: 2.0
+    profile_enabled: false
+visualization:
+  plots: false
+  animation: false
+  terrain_grid_resolution: 48
+rviz:
+  enabled: true
+  frame_id: map
+  sample_count: 30
+  sample_topic: /fdm_mppi/sample_rollouts
+  sample_path_topic_prefix: /fdm_mppi/sample_rollout_
+  selected_path_topic: /fdm_mppi/selected_rollout
+  history_path_topic: /fdm_mppi/history_path
+  history_max_points: 3000
+  robot_topic: /fdm_mppi/cube_robot
+  robot_scale:
+  - 0.93
+  - 0.7
+  - 0.35
