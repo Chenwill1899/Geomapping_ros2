@@ -1,0 +1,603 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>H-FDM H25 Network Structure</title>
+  <style>
+    :root {
+      --ink: #111827;
+      --muted: #4b5563;
+      --paper: #f8fafc;
+      --panel: #ffffff;
+      --line: #cbd5e1;
+      --blue: #2563eb;
+      --teal: #0f766e;
+      --amber: #b45309;
+      --rose: #be123c;
+      --violet: #6d28d9;
+      --green: #15803d;
+      --shadow: 0 18px 45px rgba(15, 23, 42, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        linear-gradient(90deg, rgba(203, 213, 225, 0.32) 1px, transparent 1px),
+        linear-gradient(rgba(203, 213, 225, 0.28) 1px, transparent 1px),
+        var(--paper);
+      background-size: 32px 32px;
+      font-family: "Aptos", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    }
+
+    main {
+      width: min(1500px, calc(100vw - 48px));
+      margin: 32px auto 56px;
+    }
+
+    header {
+      display: grid;
+      grid-template-columns: 1.6fr 1fr;
+      gap: 24px;
+      align-items: end;
+      margin-bottom: 24px;
+      border-bottom: 2px solid var(--ink);
+      padding-bottom: 18px;
+    }
+
+    h1 {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(30px, 4vw, 56px);
+      line-height: 0.98;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      margin: 12px 0 0;
+      max-width: 900px;
+      color: var(--muted);
+      font-size: 16px;
+      line-height: 1.5;
+    }
+
+    .meta {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .metric {
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.82);
+      padding: 12px 14px;
+      min-height: 72px;
+    }
+
+    .metric b {
+      display: block;
+      font-size: 21px;
+      line-height: 1.1;
+      margin-bottom: 6px;
+    }
+
+    .metric span {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    section {
+      background: rgba(255, 255, 255, 0.88);
+      border: 1px solid var(--line);
+      box-shadow: var(--shadow);
+      padding: 22px;
+      margin-top: 24px;
+    }
+
+    h2 {
+      margin: 0 0 16px;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 24px;
+      letter-spacing: 0;
+    }
+
+    .caption {
+      margin: 14px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .system-grid {
+      display: grid;
+      grid-template-columns: 1fr 58px 1.1fr 58px 1fr 58px 1.05fr;
+      align-items: stretch;
+      gap: 0;
+      overflow-x: auto;
+      padding-bottom: 6px;
+    }
+
+    .stack {
+      display: grid;
+      gap: 12px;
+      min-width: 210px;
+    }
+
+    .arrow {
+      position: relative;
+      min-width: 58px;
+    }
+
+    .arrow::before {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 9px;
+      right: 12px;
+      border-top: 2px solid var(--ink);
+    }
+
+    .arrow::after {
+      content: "";
+      position: absolute;
+      top: calc(50% - 6px);
+      right: 6px;
+      width: 12px;
+      height: 12px;
+      border-top: 2px solid var(--ink);
+      border-right: 2px solid var(--ink);
+      transform: rotate(45deg);
+    }
+
+    .node {
+      border: 1.5px solid var(--ink);
+      background: var(--panel);
+      padding: 14px;
+      min-height: 104px;
+      position: relative;
+    }
+
+    .node::before {
+      content: attr(data-tag);
+      position: absolute;
+      top: -11px;
+      left: 12px;
+      background: var(--paper);
+      padding: 0 7px;
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .node h3 {
+      margin: 0 0 8px;
+      font-size: 16px;
+      line-height: 1.2;
+    }
+
+    .node p,
+    .node li {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    ul {
+      margin: 0;
+      padding-left: 17px;
+    }
+
+    .blue { border-color: var(--blue); }
+    .teal { border-color: var(--teal); }
+    .amber { border-color: var(--amber); }
+    .rose { border-color: var(--rose); }
+    .violet { border-color: var(--violet); }
+    .green { border-color: var(--green); }
+
+    .model-wrap {
+      overflow-x: auto;
+      padding-bottom: 8px;
+    }
+
+    .model-grid {
+      min-width: 1320px;
+      display: grid;
+      grid-template-columns: 0.95fr 1.3fr 1.1fr 1.15fr 1.15fr 1.1fr;
+      gap: 14px;
+      align-items: start;
+    }
+
+    .column {
+      display: grid;
+      gap: 12px;
+      align-content: start;
+    }
+
+    .column-title {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--muted);
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 8px;
+      min-height: 32px;
+    }
+
+    .block {
+      border: 1px solid var(--line);
+      background: #fff;
+      padding: 12px;
+      min-height: 92px;
+      position: relative;
+    }
+
+    .block h3 {
+      margin: 0 0 8px;
+      font-size: 15px;
+    }
+
+    .shape {
+      display: inline-block;
+      border: 1px solid currentColor;
+      padding: 3px 6px;
+      margin: 2px 4px 6px 0;
+      color: var(--muted);
+      font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .formula {
+      font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+      font-size: 12px;
+      color: var(--ink);
+      background: #f1f5f9;
+      border: 1px solid #e2e8f0;
+      padding: 8px;
+      margin-top: 8px;
+      line-height: 1.55;
+    }
+
+    .link {
+      height: 34px;
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      color: var(--muted);
+      font-size: 12px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .link::before,
+    .link::after {
+      content: "";
+      border-top: 1px solid var(--line);
+    }
+
+    .link span {
+      padding: 0 8px;
+    }
+
+    .legend {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 16px;
+    }
+
+    .legend-item {
+      border-top: 4px solid var(--line);
+      padding-top: 7px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .legend-item b {
+      display: block;
+      color: var(--ink);
+      margin-bottom: 2px;
+      font-size: 13px;
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+
+    .source-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    code {
+      font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+      font-size: 0.94em;
+    }
+
+    @media (max-width: 980px) {
+      main {
+        width: min(100vw - 24px, 1500px);
+        margin-top: 18px;
+      }
+
+      header,
+      .two-col {
+        grid-template-columns: 1fr;
+      }
+
+      .meta,
+      .legend {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      section {
+        padding: 16px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>H-FDM H25 Learned Rollout Network</h1>
+        <p class="subtitle">
+          Geomapping MPPI currently uses a TorchScript export from <code>high_level_fdm</code>.
+          The learned model predicts relative future poses, applied twists, and stepwise risks for
+          each MPPI candidate sequence; the controller then adds goal/path/progress and residual
+          regularization costs around that learned rollout.
+        </p>
+      </div>
+      <div class="meta">
+        <div class="metric"><b>H=10</b><span>history frames</span></div>
+        <div class="metric"><b>N=25</b><span>future horizon</span></div>
+        <div class="metric"><b>64x64x1</b><span>reward_cost map</span></div>
+        <div class="metric"><b>K=6</b><span>risk logits</span></div>
+      </div>
+    </header>
+
+    <section>
+      <h2>Figure 1. Runtime Dataflow</h2>
+      <div class="system-grid">
+        <div class="stack">
+          <div class="node blue" data-tag="Sensors">
+            <h3>Geomapping Inputs</h3>
+            <ul>
+              <li>Robot state: <code>[x,y,yaw,vx,vy,wz]</code></li>
+              <li>Local costmap: <code>reward_cost</code></li>
+              <li>Frontend path and RViz goal</li>
+            </ul>
+          </div>
+          <div class="node blue" data-tag="Context">
+            <h3>History Buffer</h3>
+            <p>Last 10 relative poses, measured velocities, and previous commands are packed into
+              <code>[B,10,10]</code>.</p>
+          </div>
+        </div>
+        <div class="arrow"></div>
+        <div class="stack">
+          <div class="node teal" data-tag="MPPI">
+            <h3>Candidate Controls</h3>
+            <p>MPPI samples <code>896</code> action sequences, each shaped
+              <code>[25,3]</code> for <code>vx,vy,wz</code>.</p>
+          </div>
+          <div class="node teal" data-tag="Map">
+            <h3>Robot-Centered Patch</h3>
+            <p>The costmap is sampled into a normalized <code>[B,1,64,64]</code> local patch.
+              Missing map data becomes a zero or unknown-cost patch depending on runtime state.</p>
+          </div>
+        </div>
+        <div class="arrow"></div>
+        <div class="stack">
+          <div class="node violet" data-tag="TorchScript">
+            <h3>HighLevelFDM</h3>
+            <ul>
+              <li>History GRU -> context embedding</li>
+              <li>Small CNN -> map embedding</li>
+              <li>Action MLP + path map samples</li>
+              <li>Decoder GRU -> future hidden states</li>
+            </ul>
+          </div>
+        </div>
+        <div class="arrow"></div>
+        <div class="stack">
+          <div class="node rose" data-tag="Outputs">
+            <h3>Learned Consequences</h3>
+            <ul>
+              <li>Relative pose: <code>[B,25,4]</code></li>
+              <li>Risk logits: <code>[B,25,6]</code></li>
+              <li>Applied twist: <code>[B,25,3]</code></li>
+            </ul>
+          </div>
+          <div class="node amber" data-tag="Cost">
+            <h3>MPPI Objective</h3>
+            <p>Learned rollout replaces handwritten kinematics. The controller still adds
+              goal, yaw, path, progress, smoothness, acceleration, jerk, lateral, yaw-rate,
+              and learned-risk costs.</p>
+          </div>
+        </div>
+      </div>
+      <p class="caption">
+        Runtime source: <code>src/mppi_controller/mppi_controller/controllers/mppi_omni_high_level_fdm_torch.py</code>
+        and <code>src/mppi_controller/mppi_controller/core/high_level_fdm_runtime.py</code>.
+      </p>
+    </section>
+
+    <section>
+      <h2>Figure 2. Layer-Level Architecture</h2>
+      <div class="model-wrap">
+        <div class="model-grid">
+          <div class="column">
+            <div class="column-title">Inputs</div>
+            <div class="block blue">
+              <h3>History Tensor</h3>
+              <span class="shape">[B,10,10]</span>
+              <p>Relative pose <code>x,y,sin(yaw),cos(yaw)</code>, measured velocity
+                <code>vx,vy,wz</code>, and previous command <code>vx,vy,wz</code>.</p>
+            </div>
+            <div class="block teal">
+              <h3>Local Map</h3>
+              <span class="shape">[B,1,64,64]</span>
+              <p>Single-channel normalized <code>reward_cost</code>, max cost 100.0,
+                0.10 m per cell.</p>
+            </div>
+            <div class="block amber">
+              <h3>Action Sequence</h3>
+              <span class="shape">[B,25,3]</span>
+              <p>Candidate controls over 2.5 s: <code>vx, vy, wz</code>, with
+                <code>dt=0.1</code>.</p>
+            </div>
+          </div>
+
+          <div class="column">
+            <div class="column-title">Encoders</div>
+            <div class="block blue">
+              <h3>HistoryEncoder</h3>
+              <span class="shape">GRU(10 -> 128)</span>
+              <span class="shape">1 layer</span>
+              <p>Returns the final hidden state <code>z_hist</code>.</p>
+            </div>
+            <div class="block teal">
+              <h3>SmallMapEncoder</h3>
+              <span class="shape">Conv 1 -> 32, k5, s2</span>
+              <span class="shape">Conv 32 -> 64, k3, s2</span>
+              <span class="shape">Conv 64 -> 128, k3, s2</span>
+              <span class="shape">AvgPool + MLP 128 -> 128</span>
+              <p>Produces <code>z_map</code>, a global terrain context vector.</p>
+            </div>
+            <div class="block amber">
+              <h3>ActionEncoder</h3>
+              <span class="shape">MLP 3 -> 32 -> 32</span>
+              <p>Each future control is embedded independently as <code>a_emb</code>.</p>
+            </div>
+          </div>
+
+          <div class="column">
+            <div class="column-title">Path Conditioning</div>
+            <div class="block green">
+              <h3>Nominal Twist Integration</h3>
+              <span class="shape">[B,25,3]</span>
+              <p>Raw actions are integrated with <code>dt=0.1</code> to form a nominal
+                relative path before residual correction.</p>
+              <div class="formula">nominal_xytheta = integrate_twist(actions)</div>
+            </div>
+            <div class="block green">
+              <h3>Map Samples Along Path</h3>
+              <span class="shape">offsets: 0, +2, -2 cells</span>
+              <span class="shape">path_feat = [B,25,3]</span>
+              <p>Samples the local map at the centerline and two lateral offsets around the
+                nominal trajectory.</p>
+            </div>
+          </div>
+
+          <div class="column">
+            <div class="column-title">Fusion + Recurrent Decoder</div>
+            <div class="block violet">
+              <h3>Feature Concatenation</h3>
+              <span class="shape">32 + 128 + 128 + 3 = 291</span>
+              <p>For each future step: action embedding, broadcast history embedding,
+                broadcast map embedding, and path-conditioned map samples.</p>
+            </div>
+            <div class="link"><span>sequence model</span></div>
+            <div class="block violet">
+              <h3>Decoder GRU</h3>
+              <span class="shape">GRU(291 -> 128)</span>
+              <span class="shape">2 layers</span>
+              <span class="shape">dropout 0.10</span>
+              <p>Produces one hidden state per future step: <code>dec_out [B,25,128]</code>.</p>
+            </div>
+          </div>
+
+          <div class="column">
+            <div class="column-title">Prediction Heads</div>
+            <div class="block rose">
+              <h3>Delta Twist Head</h3>
+              <span class="shape">MLP 128 -> 128 -> 64 -> 3</span>
+              <p>Predicts bounded residual twist, scaled by learned
+                <code>delta_scale=[0.5,0.5,0.8]</code>.</p>
+              <div class="formula">applied_twist = actions + tanh(head(dec_out)) * delta_scale</div>
+            </div>
+            <div class="block rose">
+              <h3>Risk Head</h3>
+              <span class="shape">MLP 128 -> 128 -> 64 -> 6</span>
+              <p>Outputs logits for collision, high_cost, stuck, tracking_failure,
+                untraversable, and any.</p>
+            </div>
+          </div>
+
+          <div class="column">
+            <div class="column-title">Outputs + MPPI Use</div>
+            <div class="block rose">
+              <h3>Pose Rollout</h3>
+              <span class="shape">pose [B,25,4]</span>
+              <p>Applied twist is integrated, then yaw is represented as
+                <code>sin/cos</code>. Geomapping converts this relative pose to world states.</p>
+            </div>
+            <div class="block amber">
+              <h3>Learned Risk Cost</h3>
+              <span class="shape">risk_any index</span>
+              <p>Uses the <code>any</code> risk channel, threshold 0.6, power 2.0,
+                and weight 4.0 in the current H-FDM profile.</p>
+              <div class="formula">cost = 4.0 * sum(max(risk_any - 0.6, 0)^2)</div>
+            </div>
+            <div class="block amber">
+              <h3>Retained Objective Terms</h3>
+              <p>Goal/yaw, path tracking, path progress, goal progress, heading-to-goal,
+                control, smoothness, acceleration, jerk, lateral, and yaw-rate terms remain
+                outside the learned model.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="legend">
+        <div class="legend-item" style="border-color: var(--blue);"><b>History</b>past state-command context</div>
+        <div class="legend-item" style="border-color: var(--teal);"><b>Map</b>local traversability evidence</div>
+        <div class="legend-item" style="border-color: var(--amber);"><b>Control/Cost</b>MPPI sampling and scoring</div>
+        <div class="legend-item" style="border-color: var(--green);"><b>Path</b>nominal path-conditioned map sampling</div>
+        <div class="legend-item" style="border-color: var(--violet);"><b>Recurrent Core</b>future sequence decoder</div>
+        <div class="legend-item" style="border-color: var(--rose);"><b>Prediction</b>learned motion and risk</div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Current Configuration Snapshot</h2>
+      <div class="two-col">
+        <div class="node violet" data-tag="Model">
+          <h3>Exported H-FDM Metadata</h3>
+          <ul>
+            <li><code>model_dir</code>: <code>/home/mexxiie/prj/high_level_fdm/runs/geomapping_data1_h25/export</code></li>
+            <li><code>fdm_ts.pt</code> + <code>fdm_metadata.json</code></li>
+            <li><code>history_len=10</code>, <code>horizon=25</code>, <code>dt=0.1</code></li>
+            <li><code>state_dim=10</code>, <code>action_dim=3</code>, <code>pose_dim=4</code>, <code>risk_dim=6</code></li>
+          </ul>
+        </div>
+        <div class="node amber" data-tag="Controller">
+          <h3>Geomapping MPPI Profile</h3>
+          <ul>
+            <li><code>default_controller: learned_hfdm_h25</code></li>
+            <li><code>fdm.mode: high_level_fdm</code>, <code>backend: torch</code></li>
+            <li><code>learned_risk_weight=4.0</code>, <code>threshold=0.6</code>, <code>power=2.0</code></li>
+            <li>Current profile: <code>src/mppi_controller/configs/mujoco_rviz_goal_hfdm_h25.yaml</code></li>
+          </ul>
+        </div>
+      </div>
+      <p class="caption">
+        Model sources: <code>/home/mexxiie/prj/high_level_fdm/src/hfdm/models/high_level_fdm.py</code>,
+        <code>/home/mexxiie/prj/high_level_fdm/src/hfdm/models/components.py</code>,
+        and <code>/home/mexxiie/prj/high_level_fdm/runs/geomapping_data1_h25/export/fdm_metadata.json</code>.
+      </p>
+    </section>
+  </main>
+</body>
+</html>
