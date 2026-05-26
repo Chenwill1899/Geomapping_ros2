@@ -2,13 +2,13 @@
 
 ## 项目目标
 
-- 当前有效目标：调优当前 150-seed H-FDM 在 no-frontend 模式下的约束/代价系数，减少绕行、横向摆动和角速度换向，同时保持 5-seed 到达率和到达时间。
+- 当前有效目标：以旧 60-seed/600-episode H-FDM H25 权重作为最终权重候选，使用 `nf_green_mild_noise_jerk` 作为最终 MPPI 控制 profile，准备 no-frontend H-FDM 的最终复验和论文图表。
 
 ## 关键背景
 
-- 相关仓库、模块或文件：`tools/run_hfdm_four_way_seed_sweep.py`、`tools/run_hfdm_model_seed_sweep.py`、`tools/geomapping_nav_trial.py`、`tools/analyze_hfdm_sweep.py`、`src/mppi_controller/configs/mujoco_rviz_goal_hfdm_h25.yaml`、`results/mppi_tuning/20260524_112625_hfdm150_four_way_5seeds`。
-- 重要约束：只调 H-FDM no-frontend profile 候选；不改 MPPI 核心逻辑，不重训 H-FDM，不切换模型作为主要优化路径。
-- 已确认假设：轨迹“绕来绕去”按路径波浪、横向摆动、角速度高频换向衡量，而不是按是否到达衡量。
+- 相关仓库、模块或文件：`src/mppi_controller/configs/mujoco_rviz_goal_hfdm_h25.yaml`、`src/ausim_geomapping_adapter/launch/ausim_scout_mppi_hfdm_no_frontend.launch.py`、`tools/run_hfdm_model_seed_sweep.py`、`tools/run_hfdm_no_frontend_candidate_sweep.py`、`tools/geomapping_nav_trial.py`、`tools/analyze_hfdm_sweep.py`、`results/mppi_tuning/20260524_hfdm60_two_way_5seeds`、`results/mppi_tuning/20260524_hfdm_no_frontend_seed424245_fix/profiles/nf_green_mild_noise_jerk.yaml`。
+- 重要约束：H-FDM 最终实验不需要跑 frontend 版本；只做 no-frontend/direct navigation；不改 MPPI 核心逻辑，不重训 H-FDM。
+- 已确认假设：轨迹“绕来绕去”按路径波浪、横向摆动、角速度高频换向和终点捕获失败衡量，而不是只按是否到达衡量。
 
 ## 当前约定
 
@@ -18,6 +18,7 @@
 
 ## 最近结论
 
-- 当前 150-seed no-frontend H-FDM 基线：5/5 到达，平均 arrival `46.52s`，平均 path `22.40m`，mean control wz switches `105.4`，mean total heading change `53.70rad`，mean_abs_vy `0.113`。
-- 已验证 tuned 候选 `nf_yaw_light_filter`：profile 在 `results/mppi_tuning/20260524_hfdm_no_frontend_tuning_fast/profiles/nf_yaw_light_filter.yaml`，5/5 到达，平均 arrival `47.78s`，path `20.98m`，control wz switches `64.8`，heading change `48.87rad`，control jerk `0.107`。相比基线 arrival 慢约 `2.7%`，但路径和控制摆动明显下降，是当前推荐的 no-frontend H-FDM 参数候选。
-- 继续围绕绿色候选尝试了 direct/silk/crisp、低滞后 filter、tight/mild sampling noise 和 soft cost 等变体。没有找到同时更短且更丝滑的 5-seed 稳健替代；`nf_green_tight_noise_jerk` 在 3-seed 快筛更快更短，但 5-seed 的 seed `424245` 出现 `40.52m` 大绕行，不能替换绿色候选。
+- 最终计划不再把 `nf_yaw_light_filter` 作为主 profile；当前 source H-FDM profile `src/mppi_controller/configs/mujoco_rviz_goal_hfdm_h25.yaml` 已同步为 `nf_green_mild_noise_jerk` 控制参数。
+- `nf_green_mild_noise_jerk` 的关键控制参数：`std_normal=[0.50,0.19,0.25]`，`smooth_weight=0.028`，`lateral_weight=0.04`，`yaw_rate_weight=0.04`，`jerk_weight=0.012`，`update_smoothing_alpha=[0.0,0.03,0.04]`，`command_filter.alpha=0.02`，deadband `0.008`。
+- 该修复 profile 已在 seed `424245` 上验证：fresh run `results/mppi_tuning/20260524_214107_hfdm150_seed424245_nf_green_mild_noise_jerk` 到达，arrival `43.6s`、path `21.48m`、final distance `0.387m`，未复现 tight-noise 的 `89.7s/40.52m` 大回环。
+- 当前 source H-FDM profile 保留 60-seed 权重 `/home/mexxiie/prj/high_level_fdm/runs/geomapping_data1_h25/export`，并默认 no-frontend：`external_path.enabled=false`、`global_path.enabled=false`、`path_tracking_weight=0`、`path_progress_weight=0`。后续仍需跑 no-frontend H-FDM final sweep；H-FDM frontend 不作为必要条件。

@@ -90,25 +90,33 @@ def test_navigation_trial_uses_sparse_obstacle_override_by_default():
     assert "default=str(DEFAULT_OBSTACLE_CONFIG)" in script_text
 
 
-def test_hfdm_profile_removes_nominal_motion_regularizers():
+def test_hfdm_profile_uses_no_frontend_mild_noise_jerk_defaults():
     profile = _load_yaml("src/mppi_controller/configs/mujoco_rviz_goal_hfdm_h25.yaml")
     mppi = profile["mppi"]
+    controller = profile["controllers"][0]
 
     assert profile["default_controller"] == "learned_hfdm_h25"
     assert mppi["learned_risk_weight"] > 0.0
     assert mppi["terrain_risk_weight"] == 0.0
     assert profile["local_costmap"]["cost_weight"] == 0.0
-    for key in (
-        "control_weight",
-        "smooth_weight",
-        "accel_weight",
-        "lateral_weight",
-        "yaw_rate_weight",
-        "jerk_weight",
-    ):
-        assert mppi[key] == 0.0
-    assert mppi["update_smoothing_alpha"] == [0.0, 0.0, 0.0]
-    assert profile["command_filter"]["enabled"] is False
-    assert profile["command_filter"]["alpha"] == 0.0
-    assert profile["command_filter"]["lateral_deadband"] == 0.0
-    assert profile["command_filter"]["yaw_deadband"] == 0.0
+    assert profile["external_path"]["enabled"] is False
+    assert profile["global_path"]["enabled"] is False
+    assert profile["final_controller"]["disable_when_local_costmap"] is True
+    assert mppi["std_normal"] == [0.5, 0.19, 0.25]
+    assert mppi["path_tracking_weight"] == 0.0
+    assert mppi["path_tracking_tolerance"] == 0.2
+    assert mppi["path_progress_weight"] == 0.0
+    assert mppi["smooth_weight"] == 0.028
+    assert mppi["accel_weight"] == 0.0
+    assert mppi["lateral_weight"] == 0.04
+    assert mppi["yaw_rate_weight"] == 0.04
+    assert mppi["jerk_weight"] == 0.012
+    assert mppi["update_smoothing_alpha"] == [0.0, 0.03, 0.04]
+    assert profile["command_filter"]["enabled"] is True
+    assert profile["command_filter"]["alpha"] == 0.02
+    assert profile["command_filter"]["max_ax"] == 2.0
+    assert profile["command_filter"]["max_ay"] == 1.0
+    assert profile["command_filter"]["max_awz"] == 2.5
+    assert profile["command_filter"]["lateral_deadband"] == 0.008
+    assert profile["command_filter"]["yaw_deadband"] == 0.008
+    assert controller["fdm"]["model_dir"] == "/home/mexxiie/prj/high_level_fdm/runs/geomapping_data1_h25/export"

@@ -48,6 +48,7 @@ private:
 
     // Subscriber
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subFilteredGroundCloud;
+    rclcpp::Subscription<elevation_msgs::msg::OccupancyElevation>::SharedPtr subExternalHeightMap;
     rclcpp::Subscription<elevation_msgs::msg::OccupancyElevation>::SharedPtr subReward;
 
     // Publisher
@@ -94,6 +95,8 @@ private:
     bool haveRobotPoint;
     bool local_publish_every_scan_;
     bool publish_global_debug_;
+    bool use_external_heightmap_;
+    std::string external_heightmap_topic_;
     double visualization_hz_;
     int64_t last_visualization_pub_time_ns_;
 
@@ -244,10 +247,20 @@ public:
         this->declare_parameter<bool>("mapping.publish_global_debug", false);
         this->get_parameter("mapping.publish_global_debug", publish_global_debug_);
 
+        this->declare_parameter<std::string>("mapping.external_heightmap_topic", "");
+        this->get_parameter("mapping.external_heightmap_topic", external_heightmap_topic_);
+        use_external_heightmap_ = !external_heightmap_topic_.empty();
+
         pool_max_nums_ = 2 * max_tree_node_nums_; //必须要大于搜索的最大节点数
         sampler_.setGoalBiased(goal_bias_);
 
-        subFilteredGroundCloud = this->create_subscription<sensor_msgs::msg::PointCloud2>("/filtered_pointcloud", 5, std::bind(&TraversabilityMapping::cloudHandler, this, std::placeholders::_1));
+        if (use_external_heightmap_) {
+            subExternalHeightMap = this->create_subscription<elevation_msgs::msg::OccupancyElevation>(
+                external_heightmap_topic_, 5, std::bind(&TraversabilityMapping::externalHeightMapHandler, this, std::placeholders::_1));
+        } else {
+            subFilteredGroundCloud = this->create_subscription<sensor_msgs::msg::PointCloud2>(
+                "/filtered_pointcloud", 5, std::bind(&TraversabilityMapping::cloudHandler, this, std::placeholders::_1));
+        }
         subReward = this->create_subscription<elevation_msgs::msg::OccupancyElevation>("/msg_local_reward", 5, std::bind(&TraversabilityMapping::rewardHandler, this, std::placeholders::_1));
 
         pubCostCloud = this->create_publisher<sensor_msgs::msg::PointCloud2>("/cost_pointcloud", 5);
@@ -1493,6 +1506,12 @@ public:
                 }
             }
         }
+
+        if (use_external_heightmap_ && getRobotPosition() && shouldPublishVisualization() && hasDebugCloudSubscribers()) {
+            elevationMapProcess();
+            publishTraversabilityMap();
+            publishCostMap();
+        }
     }
 
     void updateCellCost2(mapCell_t *thisCell, const float &cost, const float &costInflate){
@@ -1541,6 +1560,61 @@ public:
         }
 
         publishMap(publish_debug);
+    }
+
+    void externalHeightMapHandler(const elevation_msgs::msg::OccupancyElevation::ConstSharedPtr heightMapMsg){
+        std::lock_guard<std::mutex> lock(mtx);
+        if (getRobotPosition() == false)
+            return;
+
+        const int width = static_cast<int>(heightMapMsg->occupancy.info.width);
+        const int height = static_cast<int>(heightMapMsg->occupancy.info.height);
+        if (width <= 0 || height <= 0)
+            return;
+
+        const double resolution = heightMapMsg->occupancy.info.resolution;
+        const double originX = heightMapMsg->occupancy.info.origin.position.x;
+        const double originY = heightMapMsg->occupancy.info.origin.position.y;
+        const size_t declaredSize = static_cast<size_t>(width) * static_cast<size_t>(height);
+        const size_t mapSize = std::min({declaredSize, heightMapMsg->height.size(), heightMapMsg->roughness.size(),
+                                         heightMapMsg->occupancy.data.size()});
+
+        for (size_t index = 0; index < mapSize; ++index) {
+            const float elevation = heightMapMsg->height[index];
+            if (!std::isfinite(elevation) || elevation == -FLT_MAX || heightMapMsg->occupancy.data[index] < 0) {
+                continue;
+            }
+
+            PointType point;
+            point.x = static_cast<float>(originX + static_cast<double>(index % static_cast<size_t>(width)) * resolution);
+            point.y = static_cast<float>(originY + static_cast<double>(index / static_cast<size_t>(width)) * resolution);
+            point.z = elevation;
+            point.intensity = static_cast<float>(heightMapMsg->occupancy.data[index]);
+
+            grid_t thisGrid;
+            if (findPointGridInMap(&thisGrid, &point) == false) {
+                continue;
+            }
+            mapCell_t *thisCell = grid2Cell(&thisGrid);
+            if (!thisCell) {
+                continue;
+            }
+
+            thisCell->elevation = elevation;
+            thisCell->elevationVar = 0.0f;
+            thisCell->occupancy = point.intensity;
+            thisCell->occupancyVar = 0.0f;
+            thisCell->roughness = heightMapMsg->roughness[index];
+            thisCell->roughnessVar = 0.0f;
+            thisCell->updatePoint();
+            thisCell->updatePointCost();
+        }
+
+        if (shouldPublishVisualization() && hasDebugCloudSubscribers()){
+            elevationMapProcess();
+            publishTraversabilityMap();
+            publishCostMap();
+        }
     }
 
     //更新点云高度z

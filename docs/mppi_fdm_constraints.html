@@ -1,0 +1,734 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MPPI Constraints With and Without H-FDM</title>
+  <script>
+    window.MathJax = {
+      tex: {
+        inlineMath: [["\\(", "\\)"]],
+        displayMath: [["\\[", "\\]"]]
+      },
+      svg: { fontCache: "global" }
+    };
+  </script>
+  <script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+  <style>
+    :root {
+      --ink: #172033;
+      --muted: #5b6472;
+      --paper: #f7f9fb;
+      --panel: #ffffff;
+      --line: #c9d3df;
+      --blue: #1f5fbf;
+      --teal: #0b7a75;
+      --amber: #a85d00;
+      --rose: #b4234c;
+      --green: #237747;
+      --shadow: 0 18px 40px rgba(23, 32, 51, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        linear-gradient(90deg, rgba(201, 211, 223, 0.28) 1px, transparent 1px),
+        linear-gradient(rgba(201, 211, 223, 0.24) 1px, transparent 1px),
+        var(--paper);
+      background-size: 30px 30px;
+      font-family: "Aptos", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    }
+
+    main {
+      width: min(1380px, calc(100vw - 48px));
+      margin: 32px auto 56px;
+    }
+
+    header {
+      display: grid;
+      grid-template-columns: 1.5fr 1fr;
+      gap: 24px;
+      align-items: end;
+      border-bottom: 2px solid var(--ink);
+      padding-bottom: 18px;
+      margin-bottom: 24px;
+    }
+
+    h1 {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(31px, 4.4vw, 58px);
+      line-height: 0.98;
+      letter-spacing: 0;
+    }
+
+    h2, h3 {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      font-size: 27px;
+      margin-bottom: 14px;
+    }
+
+    h3 {
+      font-size: 20px;
+      margin-bottom: 10px;
+    }
+
+    p {
+      margin: 8px 0;
+      line-height: 1.58;
+    }
+
+    code {
+      font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+      font-size: 0.92em;
+      background: #eef3f8;
+      border: 1px solid #d8e1ea;
+      padding: 1px 5px;
+    }
+
+    .subtitle {
+      margin-top: 14px;
+      max-width: 860px;
+      color: var(--muted);
+      font-size: 16px;
+    }
+
+    .meta {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .metric {
+      background: rgba(255, 255, 255, 0.84);
+      border: 1px solid var(--line);
+      min-height: 72px;
+      padding: 12px 14px;
+    }
+
+    .metric b {
+      display: block;
+      font-size: 20px;
+      line-height: 1.15;
+      margin-bottom: 6px;
+    }
+
+    .metric span {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    section {
+      background: rgba(255, 255, 255, 0.92);
+      border: 1px solid var(--line);
+      box-shadow: var(--shadow);
+      padding: 22px;
+      margin-top: 24px;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .constraint-compare {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+      align-items: stretch;
+    }
+
+    .formula-panel {
+      border: 2px solid var(--line);
+      background: #fff;
+      padding: 18px;
+    }
+
+    .formula-panel.nominal {
+      border-top: 7px solid var(--amber);
+    }
+
+    .formula-panel.fdm {
+      border-top: 7px solid var(--green);
+    }
+
+    .formula-panel h3 {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: baseline;
+    }
+
+    .formula-panel h3 span {
+      font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 400;
+    }
+
+    .constraint-list {
+      margin: 12px 0 0;
+      padding-left: 18px;
+      line-height: 1.55;
+    }
+
+    .takeaway-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    .takeaway {
+      border: 1px solid var(--line);
+      background: #fbfdff;
+      padding: 12px;
+      min-height: 106px;
+    }
+
+    .takeaway b {
+      display: block;
+      margin-bottom: 6px;
+    }
+
+    .takeaway span {
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    .swap {
+      border: 1px solid var(--line);
+      background: #f7fbf8;
+      padding: 14px 16px;
+      margin-top: 16px;
+    }
+
+    .box {
+      border: 1px solid var(--line);
+      background: #fbfdff;
+      padding: 16px;
+    }
+
+    .box.blue { border-top: 5px solid var(--blue); }
+    .box.teal { border-top: 5px solid var(--teal); }
+    .box.amber { border-top: 5px solid var(--amber); }
+    .box.rose { border-top: 5px solid var(--rose); }
+    .box.green { border-top: 5px solid var(--green); }
+
+    .equation {
+      border-left: 4px solid var(--blue);
+      background: #f8fbff;
+      padding: 12px 14px;
+      margin: 12px 0;
+      overflow-x: auto;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 900px;
+      background: #fff;
+    }
+
+    th, td {
+      border: 1px solid var(--line);
+      padding: 11px 12px;
+      vertical-align: top;
+      text-align: left;
+      line-height: 1.45;
+    }
+
+    th {
+      background: #eef4fb;
+      font-weight: 700;
+    }
+
+    .tag {
+      display: inline-block;
+      border: 1px solid var(--line);
+      background: #f4f7fa;
+      padding: 2px 7px;
+      margin: 2px 4px 2px 0;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .note {
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    @media (max-width: 900px) {
+      main {
+        width: min(100% - 24px, 1380px);
+        margin-top: 20px;
+      }
+
+      header,
+      .grid-2,
+      .constraint-compare,
+      .takeaway-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>有 / 无 H-FDM 的 MPPI 约束公式</h1>
+        <p class="subtitle">
+          这份文档按当前 Geomapping MuJoCo closed-loop controller 的实现写出公式：
+          无 FDM 时使用解析 SE(2) rollout 和显式约束代价；有 H-FDM 时用 TorchScript
+          网络替换 rollout 与风险评估，把一部分显式约束折叠为 learned risk。
+        </p>
+      </div>
+      <div class="meta">
+        <div class="metric"><b>H = 25</b><span>10 Hz x 2.5 s horizon</span></div>
+        <div class="metric"><b>896</b><span>sampled control sequences</span></div>
+        <div class="metric"><b>3D control</b><span>vx, vy, wz</span></div>
+        <div class="metric"><b>H-FDM</b><span>pose rollout + risk scores</span></div>
+      </div>
+    </header>
+
+    <section>
+      <h2>核心对比：两个 MPPI 的约束函数</h2>
+      <p>
+        这里的“约束函数”指 MPPI 打分函数里的软约束 / 代价项；真正的硬约束在两边相同，
+        主要是 \(u_t\in\mathcal U\) 和速度响应的加速度限幅。FDM 改变的是
+        “候选控制序列怎么预测成未来轨迹，以及风险约束怎么计算”。
+      </p>
+      <div class="constraint-compare">
+        <div class="formula-panel nominal">
+          <h3>无 FDM：Nominal MPPI <span>手写 rollout + 手写风险</span></h3>
+          <div class="equation">
+            \[
+            \begin{aligned}
+            U^\star
+            = \arg\min_{U_i}\quad
+            S_i^{nom} ={}&
+            J_{goal}(\hat X_i^{kin})
+            + J_{ctrl}(U_i,U_i^{resp}) \\
+            &+ J_{obs}(\hat X_i^{kin})
+            + J_{costmap}(\hat X_i^{kin})
+            + J_{terrain}(\hat X_i^{kin}) \\
+            &+ J_{path}(\hat X_i^{kin})
+            + J_{progress}(\hat X_i^{kin})
+            + J_{heading}(\hat X_i^{kin})
+            \end{aligned}
+            \]
+            \[
+            \text{s.t.}\quad
+            \hat X_i^{kin}=f_{kin}(x_k,U_i),\quad
+            u_{i,t}\in\mathcal U,\quad
+            |\Delta u^{resp}_{i,t}|\le a_{\max}\Delta t
+            \]
+          </div>
+          <ul class="constraint-list">
+            <li>轨迹由 SE(2) 运动学积分得到。</li>
+            <li>障碍物、costmap、地形风险分别写成显式代价函数。</li>
+            <li>风险项需要手动设计权重、阈值、膨胀半径和 cost power。</li>
+          </ul>
+        </div>
+
+        <div class="formula-panel fdm">
+          <h3>有 H-FDM：Learned MPPI <span>学习 rollout + 学习风险</span></h3>
+          <div class="equation">
+            \[
+            \begin{aligned}
+            U^\star
+            = \arg\min_{U_i}\quad
+            S_i^{fdm} ={}&
+            J_{goal}(\hat X_i^{fdm})
+            + J_{ctrl}(U_i,U_i^{resp}) \\
+            &+ J_{path}(\hat X_i^{fdm})
+            + J_{progress}(\hat X_i^{fdm})
+            + J_{heading}(\hat X_i^{fdm}) \\
+            &+ J_{risk}^{fdm}(\hat r_i)
+            \end{aligned}
+            \]
+            \[
+            \text{s.t.}\quad
+            (\Delta\hat\xi_i,\hat r_i,\hat u_i^{applied})
+            = f_\phi(h_k,M_k,U_i),\quad
+            \hat X_i^{fdm}=T_{world}(x_k,\Delta\hat\xi_i,\hat u_i^{applied})
+            \]
+          </div>
+          <ul class="constraint-list">
+            <li>未来轨迹由 H-FDM 直接预测相对位姿和 applied twist。</li>
+            <li>显式 obstacle / costmap / terrain 约束合并成 learned risk。</li>
+            <li>局部 costmap 不再直接惩罚轨迹，而是作为模型输入 \(M_k\)。</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="swap">
+        <h3>FDM 做的核心替换</h3>
+        <div class="equation">
+          \[
+          \underbrace{
+          \hat X=f_{kin}(x_k,U),\quad
+          J_{obs}+J_{costmap}+J_{terrain}
+          }_{\text{无 FDM：手写轨迹预测 + 手写风险约束}}
+          \quad\Longrightarrow\quad
+          \underbrace{
+          (\Delta\hat\xi,\hat r,\hat u^{applied})=f_\phi(h_k,M_k,U),\quad
+          J_{risk}^{fdm}
+          }_{\text{有 H-FDM：学习轨迹预测 + 学习风险约束}}
+          \]
+        </div>
+      </div>
+
+      <div class="takeaway-grid">
+        <div class="takeaway">
+          <b>简化 1：少调手写风险</b>
+          <span>原来的障碍物半径、安全距离、costmap 权重、terrain 阈值被压缩成 learned risk 的权重、阈值和幂次。</span>
+        </div>
+        <div class="takeaway">
+          <b>简化 2：少依赖前端路径</b>
+          <span>no-frontend H-FDM 可以关闭 path tracking / path progress，让 MPPI 直接围绕 RViz goal 和 learned risk 优化。</span>
+        </div>
+        <div class="takeaway">
+          <b>优化 1：预测更贴近真实响应</b>
+          <span>FDM 用历史状态、历史命令、局部地图和整段候选动作预测未来，不只是假设理想 SE(2) 积分。</span>
+        </div>
+        <div class="takeaway">
+          <b>优化 2：风险与地形耦合</b>
+          <span>风险由模型根据局部 reward/cost map 和动作序列判断，可表达地形、障碍、运动响应之间的耦合。</span>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>统一 MPPI 采样与更新</h2>
+      <p>
+        每个控制周期，MPPI 从上一轮名义控制序列 \(\bar U\) 周围采样 \(K\) 条候选控制序列。
+        第 \(i\) 条候选为：
+      </p>
+      <div class="equation">
+        \[
+        U_i = \Pi_{\mathcal U}\left(\bar U + \epsilon_i\right), \qquad
+        \epsilon_i \sim \mathcal N(0,\Sigma_u), \qquad i=1,\ldots,K
+        \]
+      </div>
+      <p>候选轨迹打分后，用 softmin 权重更新名义控制序列：</p>
+      <div class="equation">
+        \[
+        w_i =
+        \frac{\exp\left(-(S_i-S_{\min})/\lambda\right)}
+        {\sum_{j=1}^{K}\exp\left(-(S_j-S_{\min})/\lambda\right)}, \qquad
+        \bar U^{+} = \sum_{i=1}^{K} w_i U_i
+        \]
+      </div>
+      <p class="note">
+        当前实现中先取 \(\bar u_0^{+}\) 作为 raw command，之后还会经过 motion policy 与 command filter 才发布给 MuJoCo。
+      </p>
+    </section>
+
+    <section>
+      <h2>硬控制约束</h2>
+      <div class="grid-2">
+        <div class="box blue">
+          <h3>控制输入边界</h3>
+          <p>控制向量定义为 \(u_t=[v_{x,t},v_{y,t},\omega_t]^\top\)。</p>
+          <div class="equation">
+            \[
+            \mathcal U =
+            \left\{
+            u_t \mid
+            v_x^{\min}\le v_{x,t}\le v_x^{\max},
+            |v_{y,t}|\le v_y^{\max},
+            |\omega_t|\le \omega^{\max}
+            \right\}
+            \]
+          </div>
+          <p>
+            当前 H-FDM profile 里 \(v_x^{\min}=0\)，所以候选速度不允许倒车。
+          </p>
+        </div>
+
+        <div class="box teal">
+          <h3>速度响应与加速度限幅</h3>
+          <p>采样控制不会直接变成真实 rollout 控制；代码先加入速度响应滞后与加速度限制：</p>
+          <div class="equation">
+            \[
+            u^{lag}_t = \beta u^{real}_{t-1} + (1-\beta)u_t
+            \]
+            \[
+            u^{real}_t =
+            \Pi_{\mathcal U}\left(
+            u^{real}_{t-1} +
+            \operatorname{clip}
+            \left(u^{lag}_t-u^{real}_{t-1}, -a_{\max}\Delta t, a_{\max}\Delta t\right)
+            \right)
+            \]
+          </div>
+          <p class="note">
+            这对应 <code>velocity_lag_beta</code>、<code>max_ax</code>、<code>max_ay</code>、<code>max_awz</code>。
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>无 FDM：Nominal MPPI</h2>
+      <p>
+        无 FDM 时，MPPI 使用显式 SE(2) 运动学 rollout。每一步的状态推进为：
+      </p>
+      <div class="equation">
+        \[
+        x_{t+1}=x_t+(v_{x,t}^{real}\cos\theta_t-v_{y,t}^{real}\sin\theta_t)\Delta t
+        \]
+        \[
+        y_{t+1}=y_t+(v_{x,t}^{real}\sin\theta_t+v_{y,t}^{real}\cos\theta_t)\Delta t,
+        \qquad
+        \theta_{t+1}=\theta_t+\omega_t^{real}\Delta t
+        \]
+      </div>
+      <p>
+        对第 \(i\) 条候选序列，nominal 代价由终端目标、控制平滑、障碍物、路径、地形和局部 costmap 显式组成：
+      </p>
+      <div class="equation">
+        \[
+        \begin{aligned}
+        S_i^{nom} ={}&
+        w_p \|\hat p_{i,H}-p_g\|_2^2
+        + w_\theta \operatorname{wrap}(\hat\theta_{i,H}-\theta_g)^2 \\
+        &+ w_u \sum_{t=0}^{H-1}\|u_{i,t}\|_2^2
+        + w_{\Delta u}\sum_{t=0}^{H-1}\|u_{i,t}-u_{i,t-1}\|_2^2 \\
+        &+ w_a\sum_{t=0}^{H-1}\|a_{i,t}\|_2^2
+        + w_j\sum_{t=0}^{H-1}\|j_{i,t}\|_2^2 \\
+        &+ w_{vy}\sum_{t=0}^{H-1}(v^{real}_{y,i,t})^2
+        + w_{\omega}\sum_{t=0}^{H-1}(\omega^{real}_{i,t})^2 \\
+        &+ J_{obs}(\hat X_i)
+        + J_{path}(\hat X_i)
+        + J_{progress}(\hat X_i)
+        + J_{heading}(\hat X_i) \\
+        &+ J_{terrain}(\hat X_i)
+        + J_{costmap}(\hat X_i).
+        \end{aligned}
+        \]
+      </div>
+      <div class="grid-2">
+        <div class="box amber">
+          <h3>显式障碍物约束</h3>
+          <div class="equation">
+            \[
+            J_{obs} =
+            w_o \sum_{t,o}
+            \left[
+            d_{safe}+r_{robot}+r_o-\|\hat p_t-c_o\|_2
+            \right]_+^2
+            \]
+          </div>
+          <p>这里 \([z]_+=\max(z,0)\)，表示只惩罚进入安全边界的部分。</p>
+        </div>
+
+        <div class="box amber">
+          <h3>局部 costmap 约束</h3>
+          <div class="equation">
+            \[
+            J_{costmap} =
+            w_c \sum_t
+            \left(
+            \frac{\operatorname{clip}(C(\hat p_t),0,C_{\max})}{C_{\max}}
+            \right)^{\gamma}
+            \]
+          </div>
+          <p>这是显式地把 costmap 栅格值变成轨迹代价。</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>有 H-FDM：Learned Rollout + Learned Risk MPPI</h2>
+      <p>
+        H-FDM 路径不再用解析运动学轨迹作为主评估对象，而是把历史状态、局部 reward/cost map 和候选动作序列送入
+        TorchScript 网络：
+      </p>
+      <div class="equation">
+        \[
+        (\Delta \hat \xi_{i,1:H},\ \hat r_{i,1:H},\ \hat u^{real}_{i,1:H})
+        =
+        f_\phi(h_k,\ M_k,\ U_i)
+        \]
+      </div>
+      <p>
+        其中 \(h_k\) 是历史状态和历史命令，\(M_k\) 是以机器人为中心采样的局部 costmap patch，
+        \(\Delta\hat\xi\) 是相对位姿预测，\(\hat r\) 是风险分数。
+      </p>
+      <div class="equation">
+        \[
+        \hat X_i^{fdm}
+        =
+        T_{world}\left(x_k,\Delta \hat \xi_{i,1:H},\hat u^{real}_{i,1:H}\right)
+        \]
+      </div>
+      <p>H-FDM MPPI 的代价写成：</p>
+      <div class="equation">
+        \[
+        \begin{aligned}
+        S_i^{fdm} ={}&
+        w_p \|\hat p^{fdm}_{i,H}-p_g\|_2^2
+        + w_\theta \operatorname{wrap}(\hat\theta^{fdm}_{i,H}-\theta_g)^2 \\
+        &+ w_u \sum_{t=0}^{H-1}\|u_{i,t}\|_2^2
+        + w_{\Delta u}\sum_{t=0}^{H-1}\|u_{i,t}-u_{i,t-1}\|_2^2 \\
+        &+ w_a\sum_{t=0}^{H-1}\|a^{resp}_{i,t}\|_2^2
+        + w_j\sum_{t=0}^{H-1}\|j^{resp}_{i,t}\|_2^2 \\
+        &+ w_{vy}\sum_{t=0}^{H-1}(v^{resp}_{y,i,t})^2
+        + w_{\omega}\sum_{t=0}^{H-1}(\omega^{resp}_{i,t})^2 \\
+        &+ J_{path}(\hat X_i^{fdm})
+        + J_{progress}(\hat X_i^{fdm})
+        + J_{heading}(\hat X_i^{fdm}) \\
+        &+ J_{risk}^{fdm}(\hat r_i).
+        \end{aligned}
+        \]
+      </div>
+      <p class="note">
+        这里的 \(u^{resp}\) 是代码中 inherited response rollout 得到的 <code>real_controls</code>；
+        H-FDM 的 <code>applied_twist</code> 用于填充预测状态速度，但当前控制正则仍按 response model 计算。
+      </p>
+      <div class="box rose">
+        <h3>Learned risk 约束</h3>
+        <p>当前实现取 H-FDM 输出中的 any-risk 通道，把超过阈值的部分作为软约束：</p>
+        <div class="equation">
+          \[
+          J_{risk}^{fdm}
+          =
+          w_F \sum_{t=1}^{H}
+          \left[\hat r^{any}_{i,t}-\tau_F\right]_+^{p_F}
+          \]
+        </div>
+        <p>
+          在当前 H-FDM profile 中，对应参数是
+          <code>risk_weight</code>、<code>risk_threshold</code> 和 <code>risk_power</code>。
+        </p>
+      </div>
+    </section>
+
+    <section>
+      <h2>逐项对比：FDM 简化和优化了哪些约束</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>约束函数 / 代价项</th>
+              <th>无 FDM nominal MPPI</th>
+              <th>有 H-FDM MPPI</th>
+              <th>FDM 带来的简化 / 优化</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>轨迹预测约束</td>
+              <td>\(\hat X^{kin}=f_{kin}(x_k,U)\)，用 SE(2) 运动学逐步积分。</td>
+              <td>\((\Delta\hat\xi,\hat r,\hat u^{applied})=f_\phi(h_k,M_k,U)\)，再转成 \(\hat X^{fdm}\)。</td>
+              <td>把手写运动学假设换成数据驱动预测；模型可以利用历史状态、历史命令和局部地图。</td>
+            </tr>
+            <tr>
+              <td>障碍物安全约束</td>
+              <td>\(J_{obs}=w_o\sum[d_{safe}+r_{robot}+r_o-\|\hat p-c_o\|]_+^2\)。</td>
+              <td>H-FDM cost 里直接 <code>del obstacles</code>，不再显式累计 obstacle array 代价。</td>
+              <td>障碍影响主要由模型输出的 \(J_{risk}^{fdm}\) 表达，减少对半径、膨胀距离、soft influence 的手工调参。</td>
+            </tr>
+            <tr>
+              <td>局部 costmap 约束</td>
+              <td>\(J_{costmap}=w_c\sum(\operatorname{clip}(C(\hat p),0,C_{max})/C_{max})^\gamma\)。</td>
+              <td>局部 costmap 被采样成机器人中心 patch \(M_k\)，输入 H-FDM。</td>
+              <td>costmap 从“栅格值直接惩罚轨迹”变成“模型根据地图和动作判断风险”。当前 H-FDM profile 可把 nominal costmap weight 置零。</td>
+            </tr>
+            <tr>
+              <td>地形风险</td>
+              <td>\(J_{terrain}=w_T\sum[\rho_T(\hat x_t)-\tau_T]_+^{p_T}\)，依赖手写 slope / roughness / friction 风险。</td>
+              <td>H-FDM controller 强制 <code>terrain_risk_weight=0</code>、<code>terrain_risk_mode=none</code>。</td>
+              <td>地形影响通过训练数据、局部地图输入和 learned risk 表达，避免再维护一套解析地形风险模型。</td>
+            </tr>
+            <tr>
+              <td>路径 / 前端约束</td>
+              <td>可启用 \(J_{path}\) 和 \(J_{path-progress}\)，强制贴近 frontend 轨迹并沿路径推进。</td>
+              <td>no-frontend H-FDM 中 \(w_{path}=0\)、\(w_{path-progress}=0\)，主要靠 RViz goal、goal progress、heading 和 learned risk。</td>
+              <td>减少对 frontend 全局/局部路径的依赖；这也是 no-frontend H-FDM 能工作的核心简化。</td>
+            </tr>
+            <tr>
+              <td>目标、进度、朝向</td>
+              <td>\(J_{goal}+J_{progress}+J_{heading}\)，基于 nominal rollout 轨迹。</td>
+              <td>同样保留，但基于 \(\hat X^{fdm}\) 预测轨迹。</td>
+              <td>FDM 不替代任务目标；它只让目标代价评估在更可信的预测轨迹上完成。</td>
+            </tr>
+            <tr>
+              <td>控制正则</td>
+              <td>\(J_{ctrl}=J_u+J_{\Delta u}+J_a+J_j+J_{vy}+J_\omega\)。</td>
+              <td>同样保留；当前 accel / jerk / lateral / yaw-rate 仍由 response rollout 的 \(u^{resp}\) 计算。</td>
+              <td>这部分不是 FDM 的简化对象，而是稳定采样控制、防止抖动和横向摆动的必要约束。</td>
+            </tr>
+            <tr>
+              <td>硬约束</td>
+              <td>\(u_t\in\mathcal U\)，\(|\Delta u^{resp}_t|\le a_{\max}\Delta t\)。</td>
+              <td>相同。</td>
+              <td>FDM 没有放宽速度边界和加速度响应边界；优化发生在 rollout / risk 约束函数上。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section>
+      <h2>当前 H-FDM Profile 的简化理解</h2>
+      <p>
+        对你的 no-frontend H-FDM 目标，可以把控制器理解成下面这个优化问题：
+      </p>
+      <div class="equation">
+        \[
+        \begin{aligned}
+        U^\star
+        =
+        \arg\min_{U_i}
+        \quad&
+        J_{goal}
+        + J_{progress}
+        + J_{heading}
+        + J_{smooth}
+        + J_{lateral}
+        + J_{yaw}
+        + J_{jerk}
+        + J_{risk}^{fdm} \\
+        \text{s.t.}\quad&
+        u_t \in \mathcal U,\quad
+        |\Delta u^{real}_t|\le a_{\max}\Delta t,\quad
+        \hat X_{1:H}=f_\phi(h_k,M_k,U_i).
+        \end{aligned}
+        \]
+      </div>
+      <p>
+        也就是说：FDM 不是把 MPPI 变成黑盒控制器，而是把“预测这条控制序列会走成什么样、会不会危险”
+        这一部分从手写约束换成学习模型；目标、进度和控制平滑仍由 MPPI 显式优化。
+      </p>
+      <p class="note">
+        代码来源：
+        <code>mppi_omni_torch.py</code>、
+        <code>mppi_omni_high_level_fdm_torch.py</code>、
+        <code>mujoco_rviz_goal_hfdm_h25.yaml</code>。
+      </p>
+    </section>
+  </main>
+</body>
+</html>

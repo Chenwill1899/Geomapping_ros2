@@ -1,4 +1,5 @@
 # MuJoCo closed-loop Geomapping profile using high_level_fdm H25 TorchScript rollout.
+# Tuned no-frontend defaults follow nf_green_mild_noise_jerk.
 # Goal is set via RViz 2D Goal Pose (/move_base_simple/goal).
 
 experiment:
@@ -20,7 +21,7 @@ simulation:
   max_steps: 1200
   minimum_distance: 0.5
 external_path:
-  enabled: true
+  enabled: false
   path_topic: /tltrajectory
   message_type: traversability_mapping/Polynome
   frame_id: map
@@ -47,7 +48,7 @@ goal_topic:
   required: true
   topic: /move_base_simple/goal
 global_path:
-  enabled: true
+  enabled: false
   resolution: 0.2
   padding: 2.0
   lookahead: 3.2
@@ -64,7 +65,7 @@ local_goal:
   enabled: false
 final_controller:
   enabled: true
-  disable_when_local_costmap: false
+  disable_when_local_costmap: true
   trigger_distance: 1.5
   rotate_threshold: 0.45
   xy_gain: 0.45
@@ -114,14 +115,14 @@ motion_policy:
     enter_angle_deg: 100.0
     exit_angle_deg: 45.0
 command_filter:
-  enabled: false
-  alpha: 0.0
-  max_ax: 1.0
-  max_ay: 0.3
-  max_awz: 0.9
+  enabled: true
+  alpha: 0.02
+  max_ax: 2.0
+  max_ay: 1.0
+  max_awz: 2.5
   lateral_scale: 1.0
-  lateral_deadband: 0.0
-  yaw_deadband: 0.0
+  lateral_deadband: 0.008
+  yaw_deadband: 0.008
 reactive_avoidance:
   enabled: false
   include_safety_dist: false
@@ -160,16 +161,16 @@ scenario:
       strength: 0.75
       floor: 0.25
 robot:
-  max_vx: 1.0
+  max_vx: 1.5
   min_vx: 0.0
   max_vy: 0.3
-  max_wz: 1.2
-  max_ax: 1.0
+  max_wz: 1.5
+  max_ax: 2.0
   max_ay: 0.35
-  max_awz: 1.2
-  velocity_lag_beta: 0.3
+  max_awz: 1.5
+  velocity_lag_beta: 0.15
   radius: 0.55
-  safety_dist: 0.2
+  safety_dist: 0.1
 mppi:
   weights:
   - 2.4
@@ -179,9 +180,9 @@ mppi:
   - 0.0
   - 0.0
   std_normal:
-  - 0.55
-  - 0.22
-  - 0.28
+  - 0.5
+  - 0.19
+  - 0.25
   num_trajectories: 896
   draw_num_traj: 20
   obstacle_weight: 0.0
@@ -189,23 +190,23 @@ mppi:
   obstacle_soft_weight: 0.0
   obstacle_influence_dist: 0.0
   control_weight: 0.0
-  smooth_weight: 0.0
+  smooth_weight: 0.020
   accel_weight: 0.0
-  lateral_weight: 0.0
-  yaw_rate_weight: 0.0
-  jerk_weight: 0.0
+  lateral_weight: 0.04
+  yaw_rate_weight: 0.04
+  jerk_weight: 0.012
   update_smoothing_alpha:
   - 0.0
-  - 0.0
-  - 0.0
+  - 0.03
+  - 0.04
   goal_change_reset_distance: 0.75
   goal_change_reset_yaw: 1.0
   goal_progress_weight: 72.0
   heading_to_goal_weight: 0.15
   heading_to_goal_min_distance: 0.6
-  path_tracking_weight: 2.0
-  path_tracking_tolerance: 0.45
-  path_progress_weight: 2.0
+  path_tracking_weight: 0.0
+  path_tracking_tolerance: 0.2
+  path_progress_weight: 0.0
   backend: torch
   device: cuda
   terrain_risk_weight: 0.0
@@ -220,7 +221,7 @@ controllers:
   fdm:
     enabled: true
     mode: high_level_fdm
-    model_dir: /home/mexxiie/prj/high_level_fdm/runs/geomapping_data1_h25/export
+    model_dir: /home/mexxiie/prj/Geomapping_ros2/results/hfdm_training/geomapping_data1_150_h25_20260523_221211/export_cuda_trace
     model_file: fdm_ts.pt
     metadata_file: fdm_metadata.json
     device: cuda

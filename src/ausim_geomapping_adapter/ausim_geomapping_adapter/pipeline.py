@@ -1,6 +1,6 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
-from launch.conditions import IfCondition
+from launch.conditions import IfCondition, LaunchConfigurationEquals
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
@@ -16,7 +16,12 @@ TRAVERSABILITY_RVIZ_FILE = (
 )
 
 
-def generate_ausim_scout_localmap_launch_description():
+def generate_ausim_scout_localmap_launch_description(
+    default_height_source="lidar",
+    default_use_frontend="false",
+    default_mppi_profile=None,
+    default_rviz_config_file=TRAVERSABILITY_RVIZ_FILE,
+):
     use_sim_time = LaunchConfiguration("use_sim_time")
     launch_rviz = LaunchConfiguration("launch_rviz")
     use_medirl = LaunchConfiguration("use_medirl")
@@ -26,6 +31,8 @@ def generate_ausim_scout_localmap_launch_description():
     mppi_profile = LaunchConfiguration("mppi_profile")
     mppi_controller = LaunchConfiguration("mppi_controller")
     mppi_cmd_vel_topic = LaunchConfiguration("mppi_cmd_vel_topic")
+    height_source = LaunchConfiguration("height_source")
+    heightmap_topic = LaunchConfiguration("heightmap_topic")
 
     ausim_lidar_topic = LaunchConfiguration("ausim_lidar_topic")
     ausim_odom_frame = LaunchConfiguration("ausim_odom_frame")
@@ -46,6 +53,10 @@ def generate_ausim_scout_localmap_launch_description():
     target_scan_lines_param = ParameterValue(target_scan_lines, value_type=int)
     horizon_scan_param = ParameterValue(horizon_scan, value_type=int)
     vertical_fov_deg_param = ParameterValue(vertical_fov_deg, value_type=float)
+    if default_mppi_profile is None:
+        default_mppi_profile = PathJoinSubstitution(
+            [FindPackageShare("mppi_controller"), "configs", "mujoco_rviz_goal.yaml"]
+        )
 
     declared_arguments = [
         DeclareLaunchArgument(
@@ -75,14 +86,12 @@ def generate_ausim_scout_localmap_launch_description():
         ),
         DeclareLaunchArgument(
             "use_frontend",
-            default_value="false",
+            default_value=default_use_frontend,
             description="Launch traversability_path and publish /tltrajectory for MPPI path tracking.",
         ),
         DeclareLaunchArgument(
             "mppi_profile",
-            default_value=PathJoinSubstitution(
-                [FindPackageShare("mppi_controller"), "configs", "mujoco_rviz_goal.yaml"]
-            ),
+            default_value=default_mppi_profile,
             description="MPPI experiment profile for MuJoCo closed-loop control.",
         ),
         DeclareLaunchArgument(
@@ -94,6 +103,17 @@ def generate_ausim_scout_localmap_launch_description():
             "mppi_cmd_vel_topic",
             default_value="/joy/cmd_vel",
             description="Command topic consumed by ausim2 Scout.",
+        ),
+        DeclareLaunchArgument(
+            "height_source",
+            default_value=default_height_source,
+            choices=["lidar", "mujoco_topdown"],
+            description="Source for /msg_local_height: lidar pipeline or ausim2 MuJoCo top-down heightmap.",
+        ),
+        DeclareLaunchArgument(
+            "heightmap_topic",
+            default_value="/msg_local_height",
+            description="OccupancyElevation heightmap topic consumed by traversability_cost.",
         ),
         DeclareLaunchArgument(
             "ausim_lidar_topic",
@@ -152,7 +172,7 @@ def generate_ausim_scout_localmap_launch_description():
         ),
         DeclareLaunchArgument(
             "rviz_config_file",
-            default_value=TRAVERSABILITY_RVIZ_FILE,
+            default_value=default_rviz_config_file,
             description="RViz config for the Geomapping view.",
         ),
     ]
@@ -249,6 +269,7 @@ def generate_ausim_scout_localmap_launch_description():
             {"vertical_fov_deg": vertical_fov_deg_param},
             {"output_frame": terrain_output_frame},
         ],
+        condition=LaunchConfigurationEquals("height_source", "lidar"),
     )
 
     traversability_filter = Node(
@@ -257,6 +278,7 @@ def generate_ausim_scout_localmap_launch_description():
         name="traversability_filter",
         output="screen",
         parameters=[{"frameID": "map"}, {"use_sim_time": use_sim_time_param}],
+        condition=LaunchConfigurationEquals("height_source", "lidar"),
     )
 
     traversability_map = Node(
@@ -275,6 +297,27 @@ def generate_ausim_scout_localmap_launch_description():
             {"mapping.visualization_hz": 2.0},
             {"mapping.publish_global_debug": False},
         ],
+        condition=LaunchConfigurationEquals("height_source", "lidar"),
+    )
+
+    traversability_map_topdown = Node(
+        package="traversability_mapping",
+        executable="traversability_map",
+        name="traversability_map",
+        output="screen",
+        parameters=[
+            traversability_param_file,
+            {"urbanMapping": True},
+            {"use_sim_time": use_sim_time_param},
+            {"planning.time_roll": 0.8},
+            {"planning.path_valid_check_distance": 6.0},
+            {"planning.inflate_r": 0.0},
+            {"mapping.local_publish_every_scan": True},
+            {"mapping.visualization_hz": 2.0},
+            {"mapping.publish_global_debug": False},
+            {"mapping.external_heightmap_topic": heightmap_topic},
+        ],
+        condition=LaunchConfigurationEquals("height_source", "mujoco_topdown"),
     )
 
     traversability_cost = Node(
@@ -282,6 +325,7 @@ def generate_ausim_scout_localmap_launch_description():
         executable="traversability_cost",
         name="traversability_cost",
         output="screen",
+        remappings=[("/msg_local_height", heightmap_topic)],
         parameters=[{"use_sim_time": use_sim_time_param}],
     )
 
@@ -356,6 +400,7 @@ def generate_ausim_scout_localmap_launch_description():
             terrain_pub,
             traversability_filter,
             traversability_map,
+            traversability_map_topdown,
             traversability_cost,
             traversability_path,
             medirl,
